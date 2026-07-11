@@ -1,18 +1,26 @@
-import 'dart:convert';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
-import '../data/mock_data.dart' as seed;
+import '../data/supabase_mappers.dart';
 import '../models/models.dart';
 
-/// Central app state: owns every collection, persists to device storage,
-/// and implements the accountability / anti-fraud business rules that used
-/// to live inside the React components (trip sign-out/in, fuel variance
-/// detection, maintenance workflow, exceptions, audit trail).
+/// Central app state: owns every collection, syncs it with the Supabase
+/// backend (so the web console and the driver app share one live source of
+/// truth via Realtime), and implements the accountability / anti-fraud
+/// business rules (trip sign-out/in, fuel variance detection, maintenance
+/// workflow, exceptions, audit trail).
+///
+/// Writes are optimistic: the in-memory lists update immediately for a
+/// snappy UI, then the change is pushed to Supabase in the background.
+/// Realtime subscriptions reconcile state across every connected client
+/// (e.g. a driver's phone raising an exception shows up on the manager's
+/// web console without a refresh).
 class FleetDataProvider extends ChangeNotifier {
   final Random _rng = Random();
+  final SupabaseClient _client = Supabase.instance.client;
+  RealtimeChannel? _channel;
 
   List<Vehicle> vehicles = [];
   List<Driver> drivers = [];
@@ -28,73 +36,143 @@ class FleetDataProvider extends ChangeNotifier {
   List<Inspection> inspections = [];
 
   bool isLoaded = false;
-
-  SharedPreferences? _prefs;
+  String? loadError;
 
   Future<void> load() async {
-    _prefs = await SharedPreferences.getInstance();
-    final hasData = _prefs!.containsKey('fleet_vehicles');
-    if (hasData) {
-      vehicles = _readList('fleet_vehicles', Vehicle.fromJson);
-      drivers = _readList('fleet_drivers', Driver.fromJson);
-      trips = _readList('fleet_trips', Trip.fromJson);
-      fuelRequests = _readList('fleet_fuel_requests', FuelRequest.fromJson);
-      maintenanceRequests = _readList('fleet_maintenance_requests', MaintenanceRequest.fromJson);
-      exceptions = _readList('fleet_exceptions', ExceptionRecord.fromJson);
-      incidents = _readList('fleet_incidents', Incident.fromJson);
-      auditLogs = _readList('fleet_audit_logs', AuditLog.fromJson);
-      policyRules = _readList('fleet_policy_rules', PolicyRule.fromJson);
-      spareParts = _readList('fleet_spare_parts', SparePart.fromJson);
-      tyres = _readList('fleet_tyres', Tyre.fromJson);
-      inspections = _readList('fleet_inspections', Inspection.fromJson);
-    } else {
-      resetToDefault(persist: false);
+    try {
+      await Future.wait([
+        _reloadVehicles(),
+        _reloadDrivers(),
+        _reloadTrips(),
+        _reloadFuelRequests(),
+        _reloadMaintenanceRequests(),
+        _reloadExceptions(),
+        _reloadIncidents(),
+        _reloadAuditLogs(),
+        _reloadPolicyRules(),
+        _reloadSpareParts(),
+        _reloadTyres(),
+        _reloadInspections(),
+      ]);
+      loadError = null;
+      _subscribeRealtime();
+    } catch (error) {
+      // Surface the failure instead of leaving the app stuck on the loading
+      // spinner -- screens can still render (with whatever partial data
+      // came back) and the caller can offer a retry.
+      debugPrint('FleetDataProvider.load failed: $error');
+      loadError = error.toString();
+    } finally {
+      isLoaded = true;
+      notifyListeners();
     }
-    isLoaded = true;
-    notifyListeners();
   }
 
-  List<T> _readList<T>(String key, T Function(Map<String, dynamic>) fromJson) {
-    final raw = _prefs?.getString(key);
-    if (raw == null) return [];
-    final list = jsonDecode(raw) as List<dynamic>;
-    return list.map((e) => fromJson(e as Map<String, dynamic>)).toList();
+  void _subscribeRealtime() {
+    _channel = _client.channel('public:fleet-sync')
+      ..onPostgresChanges(event: PostgresChangeEvent.all, schema: 'public', table: 'vehicles', callback: (_) => _reloadVehicles().then((_) => notifyListeners()))
+      ..onPostgresChanges(event: PostgresChangeEvent.all, schema: 'public', table: 'drivers', callback: (_) => _reloadDrivers().then((_) => notifyListeners()))
+      ..onPostgresChanges(event: PostgresChangeEvent.all, schema: 'public', table: 'trips', callback: (_) => _reloadTrips().then((_) => notifyListeners()))
+      ..onPostgresChanges(event: PostgresChangeEvent.all, schema: 'public', table: 'fuel_requests', callback: (_) => _reloadFuelRequests().then((_) => notifyListeners()))
+      ..onPostgresChanges(event: PostgresChangeEvent.all, schema: 'public', table: 'maintenance_requests', callback: (_) => _reloadMaintenanceRequests().then((_) => notifyListeners()))
+      ..onPostgresChanges(event: PostgresChangeEvent.all, schema: 'public', table: 'exception_records', callback: (_) => _reloadExceptions().then((_) => notifyListeners()))
+      ..onPostgresChanges(event: PostgresChangeEvent.all, schema: 'public', table: 'incidents', callback: (_) => _reloadIncidents().then((_) => notifyListeners()))
+      ..onPostgresChanges(event: PostgresChangeEvent.all, schema: 'public', table: 'audit_logs', callback: (_) => _reloadAuditLogs().then((_) => notifyListeners()))
+      ..onPostgresChanges(event: PostgresChangeEvent.all, schema: 'public', table: 'policy_rules', callback: (_) => _reloadPolicyRules().then((_) => notifyListeners()))
+      ..onPostgresChanges(event: PostgresChangeEvent.all, schema: 'public', table: 'spare_parts', callback: (_) => _reloadSpareParts().then((_) => notifyListeners()))
+      ..onPostgresChanges(event: PostgresChangeEvent.all, schema: 'public', table: 'tyres', callback: (_) => _reloadTyres().then((_) => notifyListeners()))
+      ..onPostgresChanges(event: PostgresChangeEvent.all, schema: 'public', table: 'inspections', callback: (_) => _reloadInspections().then((_) => notifyListeners()))
+      ..subscribe();
   }
 
-  Future<void> _write(String key, List<dynamic> list) async {
-    await _prefs?.setString(key, jsonEncode(list.map((e) => e.toJson()).toList()));
+  @override
+  void dispose() {
+    if (_channel != null) _client.removeChannel(_channel!);
+    super.dispose();
   }
 
-  void resetToDefault({bool persist = true}) {
-    vehicles = List.of(seed.defaultVehicles);
-    drivers = List.of(seed.defaultDrivers);
-    trips = List.of(seed.defaultTrips);
-    fuelRequests = List.of(seed.defaultFuelRequests);
-    maintenanceRequests = List.of(seed.defaultMaintenanceRequests);
-    exceptions = List.of(seed.defaultExceptions);
-    incidents = List.of(seed.defaultIncidents);
-    auditLogs = List.of(seed.defaultAuditLogs);
-    policyRules = List.of(seed.defaultPolicyRules);
-    spareParts = List.of(seed.defaultSpareParts);
-    tyres = List.of(seed.defaultTyres);
-    inspections = List.of(seed.defaultInspections);
-    if (persist) _persistAll();
-    notifyListeners();
+  Future<void> _reloadVehicles() async {
+    final rows = await _client.from('vehicles').select().order('created_at');
+    vehicles = rows.map((r) => Vehicle.fromJson(vehicleRowToJson(r))).toList();
   }
 
-  void _persistAll() {
-    _write('fleet_vehicles', vehicles);
-    _write('fleet_drivers', drivers);
-    _write('fleet_trips', trips);
-    _write('fleet_fuel_requests', fuelRequests);
-    _write('fleet_maintenance_requests', maintenanceRequests);
-    _write('fleet_exceptions', exceptions);
-    _write('fleet_incidents', incidents);
-    _write('fleet_audit_logs', auditLogs);
-    _write('fleet_policy_rules', policyRules);
-    _write('fleet_spare_parts', spareParts);
-    _write('fleet_tyres', tyres);
-    _write('fleet_inspections', inspections);
+  Future<void> _reloadDrivers() async {
+    final rows = await _client.from('drivers').select().order('created_at');
+    drivers = rows.map((r) => Driver.fromJson(driverRowToJson(r))).toList();
+  }
+
+  Future<void> _reloadTrips() async {
+    final rows = await _client.from('trips').select().order('created_at', ascending: false);
+    trips = rows.map((r) => Trip.fromJson(tripRowToJson(r))).toList();
+  }
+
+  Future<void> _reloadFuelRequests() async {
+    final rows = await _client.from('fuel_requests').select().order('created_at', ascending: false);
+    fuelRequests = rows.map((r) => FuelRequest.fromJson(fuelRequestRowToJson(r))).toList();
+  }
+
+  Future<void> _reloadMaintenanceRequests() async {
+    final rows = await _client.from('maintenance_requests').select().order('created_at', ascending: false);
+    maintenanceRequests = rows.map((r) => MaintenanceRequest.fromJson(maintenanceRequestRowToJson(r))).toList();
+  }
+
+  Future<void> _reloadExceptions() async {
+    final rows = await _client.from('exception_records').select().order('created_at', ascending: false);
+    exceptions = rows.map((r) => ExceptionRecord.fromJson(exceptionRowToJson(r))).toList();
+  }
+
+  Future<void> _reloadIncidents() async {
+    final rows = await _client.from('incidents').select().order('created_at', ascending: false);
+    incidents = rows.map((r) => Incident.fromJson(incidentRowToJson(r))).toList();
+  }
+
+  Future<void> _reloadAuditLogs() async {
+    final rows = await _client.from('audit_logs').select().order('created_at', ascending: false);
+    auditLogs = rows.map((r) => AuditLog.fromJson(auditLogRowToJson(r))).toList();
+  }
+
+  Future<void> _reloadPolicyRules() async {
+    final rows = await _client.from('policy_rules').select().order('created_at');
+    policyRules = rows.map((r) => PolicyRule.fromJson(policyRuleRowToJson(r))).toList();
+  }
+
+  Future<void> _reloadSpareParts() async {
+    final rows = await _client.from('spare_parts').select().order('created_at');
+    spareParts = rows.map((r) => SparePart.fromJson(sparePartRowToJson(r))).toList();
+  }
+
+  Future<void> _reloadTyres() async {
+    final rows = await _client.from('tyres').select().order('created_at');
+    tyres = rows.map((r) => Tyre.fromJson(tyreRowToJson(r))).toList();
+  }
+
+  Future<void> _reloadInspections() async {
+    final rows = await _client.from('inspections').select().order('created_at', ascending: false);
+    inspections = rows.map((r) => Inspection.fromJson(inspectionRowToJson(r))).toList();
+  }
+
+  // ---------------------------------------------------------------------
+  // Optimistic write helpers: push one changed row to Supabase in the
+  // background. Errors are logged, not thrown -- the Realtime subscription
+  // above is the source of truth other clients reconcile against.
+  // ---------------------------------------------------------------------
+
+  void _pushVehicle(Vehicle v) => _upsert('vehicles', vehicleToRow(v));
+  void _pushTrip(Trip t) => _upsert('trips', tripToRow(t));
+  void _pushFuelRequest(FuelRequest f) => _upsert('fuel_requests', fuelRequestToRow(f));
+  void _pushMaintenanceRequest(MaintenanceRequest m) => _upsert('maintenance_requests', maintenanceRequestToRow(m));
+  void _pushException(ExceptionRecord e) => _upsert('exception_records', exceptionToRow(e));
+  void _pushIncident(Incident i) => _upsert('incidents', incidentToRow(i));
+  void _pushAuditLog(AuditLog l) => _upsert('audit_logs', auditLogToRow(l));
+  void _pushPolicyRule(PolicyRule p) => _upsert('policy_rules', policyRuleToRow(p));
+  void _pushSparePart(SparePart s) => _upsert('spare_parts', sparePartToRow(s));
+  void _pushInspection(Inspection i) => _upsert('inspections', inspectionToRow(i));
+
+  void _upsert(String table, Map<String, dynamic> row) {
+    _client.from(table).upsert(row).catchError((Object error) {
+      debugPrint('Supabase upsert into $table failed: $error');
+      return <Map<String, dynamic>>[];
+    });
   }
 
   String _genId(String prefix) => '$prefix-${DateTime.now().microsecondsSinceEpoch}${_rng.nextInt(999)}';
@@ -117,20 +195,18 @@ class FleetDataProvider extends ChangeNotifier {
   // ---------------------------------------------------------------------
 
   void addAuditLog({required String userId, required String userRole, required String action, required String entityType, required String entityId, required String details}) {
-    auditLogs = [
-      AuditLog(
-        id: _genId('log'),
-        timestamp: DateTime.now().toIso8601String(),
-        userId: userId,
-        userRole: userRole,
-        action: action,
-        entityType: entityType,
-        entityId: entityId,
-        details: details,
-      ),
-      ...auditLogs,
-    ];
-    _write('fleet_audit_logs', auditLogs);
+    final newLog = AuditLog(
+      id: _genId('log'),
+      timestamp: DateTime.now().toIso8601String(),
+      userId: userId,
+      userRole: userRole,
+      action: action,
+      entityType: entityType,
+      entityId: entityId,
+      details: details,
+    );
+    auditLogs = [newLog, ...auditLogs];
+    _pushAuditLog(newLog);
     notifyListeners();
   }
 
@@ -142,37 +218,37 @@ class FleetDataProvider extends ChangeNotifier {
     required String vehicleId,
     String? driverId,
   }) {
-    final id = _genId('exc');
-    exceptions = [
-      ExceptionRecord(
-        id: id,
-        type: type,
-        severity: severity,
-        title: title,
-        description: description,
-        vehicleId: vehicleId,
-        driverId: driverId,
-        timestamp: DateTime.now().toIso8601String(),
-        status: 'Open',
-      ),
-      ...exceptions,
-    ];
-    _write('fleet_exceptions', exceptions);
+    final newException = ExceptionRecord(
+      id: _genId('exc'),
+      type: type,
+      severity: severity,
+      title: title,
+      description: description,
+      vehicleId: vehicleId,
+      driverId: driverId,
+      timestamp: DateTime.now().toIso8601String(),
+      status: 'Open',
+    );
+    exceptions = [newException, ...exceptions];
+    _pushException(newException);
     addAuditLog(
       userId: 'System (Fraud Detection)',
       userRole: 'Security Core',
       action: 'ALERT DETECTED',
       entityType: 'Exception',
-      entityId: id,
+      entityId: newException.id,
       details: title,
     );
   }
 
   void resolveException(String id, {required String resolvedBy, required String resolutionNotes}) {
-    exceptions = exceptions
-        .map((e) => e.id == id ? e.copyWith(status: 'Resolved', resolutionNotes: resolutionNotes, resolvedBy: resolvedBy) : e)
-        .toList();
-    _write('fleet_exceptions', exceptions);
+    ExceptionRecord? updated;
+    exceptions = exceptions.map((e) {
+      if (e.id != id) return e;
+      updated = e.copyWith(status: 'Resolved', resolutionNotes: resolutionNotes, resolvedBy: resolvedBy);
+      return updated!;
+    }).toList();
+    if (updated != null) _pushException(updated!);
     addAuditLog(
       userId: resolvedBy,
       userRole: 'Fleet Manager',
@@ -185,8 +261,13 @@ class FleetDataProvider extends ChangeNotifier {
   }
 
   void setExceptionStatus(String id, String status) {
-    exceptions = exceptions.map((e) => e.id == id ? e.copyWith(status: status) : e).toList();
-    _write('fleet_exceptions', exceptions);
+    ExceptionRecord? updated;
+    exceptions = exceptions.map((e) {
+      if (e.id != id) return e;
+      updated = e.copyWith(status: status);
+      return updated!;
+    }).toList();
+    if (updated != null) _pushException(updated!);
     notifyListeners();
   }
 
@@ -220,7 +301,7 @@ class FleetDataProvider extends ChangeNotifier {
       requestedAt: DateTime.now().toIso8601String(),
     );
     trips = [trip, ...trips];
-    _write('fleet_trips', trips);
+    _pushTrip(trip);
     final driver = driverById(driverId);
     addAuditLog(
       userId: driver?.name ?? driverId,
@@ -235,12 +316,13 @@ class FleetDataProvider extends ChangeNotifier {
   }
 
   void approveTrip(String tripId, {required String approver}) {
-    trips = trips
-        .map((t) => t.id == tripId
-            ? t.copyWith(status: TripStatus.approved, approvedAt: DateTime.now().toIso8601String())
-            : t)
-        .toList();
-    _write('fleet_trips', trips);
+    Trip? updated;
+    trips = trips.map((t) {
+      if (t.id != tripId) return t;
+      updated = t.copyWith(status: TripStatus.approved, approvedAt: DateTime.now().toIso8601String());
+      return updated!;
+    }).toList();
+    if (updated != null) _pushTrip(updated!);
     addAuditLog(
       userId: approver,
       userRole: 'Fleet Manager',
@@ -259,22 +341,24 @@ class FleetDataProvider extends ChangeNotifier {
     // this trip so the sign-in fraud check has an independent reference
     // point to compare the driver-reported odometer delta against.
     final simulatedGpsDistanceKm = (8 + _rng.nextInt(55)).toDouble();
-    trips = trips
-        .map((t) => t.id == tripId
-            ? t.copyWith(
-                status: TripStatus.active,
-                startedAt: DateTime.now().toIso8601String(),
-                signOutOdometer: odometer,
-                signOutFuelLevel: fuelLevel,
-                signOutOfficerName: officerName,
-                signOutTime: DateTime.now().toIso8601String(),
-                gpsDistanceKm: simulatedGpsDistanceKm,
-              )
-            : t)
-        .toList();
-    _write('fleet_trips', trips);
-    vehicles = vehicles.map((v) => v.id == trip.vehicleId ? v.copyWith(status: VehicleStatus.active) : v).toList();
-    _write('fleet_vehicles', vehicles);
+    final updatedTrip = trip.copyWith(
+      status: TripStatus.active,
+      startedAt: DateTime.now().toIso8601String(),
+      signOutOdometer: odometer,
+      signOutFuelLevel: fuelLevel,
+      signOutOfficerName: officerName,
+      signOutTime: DateTime.now().toIso8601String(),
+      gpsDistanceKm: simulatedGpsDistanceKm,
+    );
+    trips = trips.map((t) => t.id == tripId ? updatedTrip : t).toList();
+    _pushTrip(updatedTrip);
+
+    final updatedVehicle = vehicles.firstWhereOrNull((v) => v.id == trip.vehicleId)?.copyWith(status: VehicleStatus.active);
+    if (updatedVehicle != null) {
+      vehicles = vehicles.map((v) => v.id == trip.vehicleId ? updatedVehicle : v).toList();
+      _pushVehicle(updatedVehicle);
+    }
+
     addAuditLog(
       userId: officerName,
       userRole: 'Gate Officer',
@@ -306,26 +390,25 @@ class FleetDataProvider extends ChangeNotifier {
     final fraudDetected = gpsDist > 0 && reportedDist > gpsDist * 1.4;
     final newStatus = fraudDetected ? TripStatus.flagged : TripStatus.completed;
 
-    trips = trips
-        .map((t) => t.id == tripId
-            ? t.copyWith(
-                status: newStatus,
-                endedAt: DateTime.now().toIso8601String(),
-                signInOdometer: odometer,
-                signInFuelLevel: fuelLevel,
-                signInOfficerName: officerName,
-                signInTime: DateTime.now().toIso8601String(),
-                gpsDistanceKm: gpsDist,
-                routeDeviationFlagged: fraudDetected,
-              )
-            : t)
-        .toList();
-    _write('fleet_trips', trips);
+    final updatedTrip = trip.copyWith(
+      status: newStatus,
+      endedAt: DateTime.now().toIso8601String(),
+      signInOdometer: odometer,
+      signInFuelLevel: fuelLevel,
+      signInOfficerName: officerName,
+      signInTime: DateTime.now().toIso8601String(),
+      gpsDistanceKm: gpsDist,
+      routeDeviationFlagged: fraudDetected,
+    );
+    trips = trips.map((t) => t.id == tripId ? updatedTrip : t).toList();
+    _pushTrip(updatedTrip);
 
-    vehicles = vehicles
-        .map((v) => v.id == trip.vehicleId ? v.copyWith(currentOdometer: odometer, status: VehicleStatus.parked) : v)
-        .toList();
-    _write('fleet_vehicles', vehicles);
+    final updatedVehicle =
+        vehicles.firstWhereOrNull((v) => v.id == trip.vehicleId)?.copyWith(currentOdometer: odometer, status: VehicleStatus.parked);
+    if (updatedVehicle != null) {
+      vehicles = vehicles.map((v) => v.id == trip.vehicleId ? updatedVehicle : v).toList();
+      _pushVehicle(updatedVehicle);
+    }
 
     addAuditLog(
       userId: officerName,
@@ -381,7 +464,7 @@ class FleetDataProvider extends ChangeNotifier {
       pumpPhotoUrl: pumpPhotoUrl,
     );
     fuelRequests = [req, ...fuelRequests];
-    _write('fleet_fuel_requests', fuelRequests);
+    _pushFuelRequest(req);
     final driver = driverById(driverId);
     addAuditLog(
       userId: driver?.name ?? driverId,
@@ -417,28 +500,24 @@ class FleetDataProvider extends ChangeNotifier {
     final expected = vehicle.expectedFuelConsumption;
     final flagged = expected > 0 && calculatedConsumption < expected * 0.4;
 
-    fuelRequests = fuelRequests
-        .map((f) => f.id == id
-            ? f.copyWith(
-                status: 'Completed',
-                approvedLiters: req.requestedLiters,
-                actualLiters: req.requestedLiters,
-                actualCost: req.estimatedCost,
-                varianceFlagged: flagged,
-                varianceReason: flagged
-                    ? 'Calculated consumption is ${calculatedConsumption.toStringAsFixed(1)} km/L, which is far below the '
-                        'expected ${expected.toStringAsFixed(1)} km/L for this vehicle. Highly indicative of fuel siphoning '
-                        'or receipt inflation.'
-                    : null,
-              )
-            : f)
-        .toList();
-    _write('fleet_fuel_requests', fuelRequests);
+    final updatedRequest = req.copyWith(
+      status: 'Completed',
+      approvedLiters: req.requestedLiters,
+      actualLiters: req.requestedLiters,
+      actualCost: req.estimatedCost,
+      varianceFlagged: flagged,
+      varianceReason: flagged
+          ? 'Calculated consumption is ${calculatedConsumption.toStringAsFixed(1)} km/L, which is far below the '
+              'expected ${expected.toStringAsFixed(1)} km/L for this vehicle. Highly indicative of fuel siphoning '
+              'or receipt inflation.'
+          : null,
+    );
+    fuelRequests = fuelRequests.map((f) => f.id == id ? updatedRequest : f).toList();
+    _pushFuelRequest(updatedRequest);
 
-    vehicles = vehicles
-        .map((v) => v.id == vehicle.id ? v.copyWith(currentMonthFuelUsed: v.currentMonthFuelUsed + req.requestedLiters) : v)
-        .toList();
-    _write('fleet_vehicles', vehicles);
+    final updatedVehicle = vehicle.copyWith(currentMonthFuelUsed: vehicle.currentMonthFuelUsed + req.requestedLiters);
+    vehicles = vehicles.map((v) => v.id == vehicle.id ? updatedVehicle : v).toList();
+    _pushVehicle(updatedVehicle);
 
     addAuditLog(
       userId: approver,
@@ -466,8 +545,13 @@ class FleetDataProvider extends ChangeNotifier {
   }
 
   void rejectFuelRequest(String id, {required String approver, required String reason}) {
-    fuelRequests = fuelRequests.map((f) => f.id == id ? f.copyWith(status: 'Rejected') : f).toList();
-    _write('fleet_fuel_requests', fuelRequests);
+    FuelRequest? updated;
+    fuelRequests = fuelRequests.map((f) {
+      if (f.id != id) return f;
+      updated = f.copyWith(status: 'Rejected');
+      return updated!;
+    }).toList();
+    if (updated != null) _pushFuelRequest(updated!);
     addAuditLog(
       userId: approver,
       userRole: 'Fleet Manager',
@@ -505,7 +589,7 @@ class FleetDataProvider extends ChangeNotifier {
       beforePhotoUrl: beforePhotoUrl,
     );
     maintenanceRequests = [req, ...maintenanceRequests];
-    _write('fleet_maintenance_requests', maintenanceRequests);
+    _pushMaintenanceRequest(req);
     final driver = driverById(driverId);
     addAuditLog(
       userId: driver?.name ?? driverId,
@@ -520,10 +604,13 @@ class FleetDataProvider extends ChangeNotifier {
   }
 
   void approveMaintenanceRequest(String id, {required String approver, required double approvedAmount}) {
-    maintenanceRequests = maintenanceRequests
-        .map((m) => m.id == id ? m.copyWith(status: MaintenanceStatus.approved, approvedAmount: approvedAmount) : m)
-        .toList();
-    _write('fleet_maintenance_requests', maintenanceRequests);
+    MaintenanceRequest? updated;
+    maintenanceRequests = maintenanceRequests.map((m) {
+      if (m.id != id) return m;
+      updated = m.copyWith(status: MaintenanceStatus.approved, approvedAmount: approvedAmount);
+      return updated!;
+    }).toList();
+    if (updated != null) _pushMaintenanceRequest(updated!);
     addAuditLog(
       userId: approver,
       userRole: 'Fleet Manager',
@@ -536,9 +623,13 @@ class FleetDataProvider extends ChangeNotifier {
   }
 
   void dispatchToGarage(String id, {required String dispatcher, required String garageName}) {
-    maintenanceRequests =
-        maintenanceRequests.map((m) => m.id == id ? m.copyWith(status: MaintenanceStatus.inGarage, garageName: garageName) : m).toList();
-    _write('fleet_maintenance_requests', maintenanceRequests);
+    MaintenanceRequest? updated;
+    maintenanceRequests = maintenanceRequests.map((m) {
+      if (m.id != id) return m;
+      updated = m.copyWith(status: MaintenanceStatus.inGarage, garageName: garageName);
+      return updated!;
+    }).toList();
+    if (updated != null) _pushMaintenanceRequest(updated!);
     addAuditLog(
       userId: dispatcher,
       userRole: 'Fleet Manager',
@@ -559,21 +650,22 @@ class FleetDataProvider extends ChangeNotifier {
     String? completionNotes,
     bool testDrivePassed = true,
   }) {
-    maintenanceRequests = maintenanceRequests
-        .map((m) => m.id == id
-            ? m.copyWith(
-                status: MaintenanceStatus.completed,
-                invoiceAmount: invoiceAmount,
-                invoicePhotoUrl: invoicePhotoUrl,
-                afterPhotoUrl: afterPhotoUrl,
-                completionNotes: completionNotes,
-                testDrivePassed: testDrivePassed,
-              )
-            : m)
-        .toList();
-    _write('fleet_maintenance_requests', maintenanceRequests);
+    MaintenanceRequest? updated;
+    maintenanceRequests = maintenanceRequests.map((m) {
+      if (m.id != id) return m;
+      updated = m.copyWith(
+        status: MaintenanceStatus.completed,
+        invoiceAmount: invoiceAmount,
+        invoicePhotoUrl: invoicePhotoUrl,
+        afterPhotoUrl: afterPhotoUrl,
+        completionNotes: completionNotes,
+        testDrivePassed: testDrivePassed,
+      );
+      return updated!;
+    }).toList();
+    if (updated != null) _pushMaintenanceRequest(updated!);
 
-    final req = maintenanceRequests.firstWhereOrNull((m) => m.id == id);
+    final req = updated;
     if (req != null && req.approvedAmount != null && (invoiceAmount - req.approvedAmount!).abs() > req.approvedAmount! * 0.15) {
       _raiseException(
         type: 'Maintenance',
@@ -599,8 +691,13 @@ class FleetDataProvider extends ChangeNotifier {
   }
 
   void verifyMaintenanceRequest(String id, {required String verifier}) {
-    maintenanceRequests = maintenanceRequests.map((m) => m.id == id ? m.copyWith(status: MaintenanceStatus.verified) : m).toList();
-    _write('fleet_maintenance_requests', maintenanceRequests);
+    MaintenanceRequest? updated;
+    maintenanceRequests = maintenanceRequests.map((m) {
+      if (m.id != id) return m;
+      updated = m.copyWith(status: MaintenanceStatus.verified);
+      return updated!;
+    }).toList();
+    if (updated != null) _pushMaintenanceRequest(updated!);
     addAuditLog(
       userId: verifier,
       userRole: 'Fleet Manager',
@@ -649,7 +746,7 @@ class FleetDataProvider extends ChangeNotifier {
       notes: notes,
     );
     inspections = [insp, ...inspections];
-    _write('fleet_inspections', inspections);
+    _pushInspection(insp);
     final driver = driverById(driverId);
     addAuditLog(
       userId: driver?.name ?? driverId,
@@ -698,7 +795,7 @@ class FleetDataProvider extends ChangeNotifier {
       status: 'Pending',
     );
     incidents = [incident, ...incidents];
-    _write('fleet_incidents', incidents);
+    _pushIncident(incident);
     final driver = driverById(driverId);
     addAuditLog(
       userId: driver?.name ?? driverId,
@@ -713,8 +810,13 @@ class FleetDataProvider extends ChangeNotifier {
   }
 
   void updateIncidentStatus(String id, String status, {required String updatedBy}) {
-    incidents = incidents.map((i) => i.id == id ? i.copyWith(status: status) : i).toList();
-    _write('fleet_incidents', incidents);
+    Incident? updated;
+    incidents = incidents.map((i) {
+      if (i.id != id) return i;
+      updated = i.copyWith(status: status);
+      return updated!;
+    }).toList();
+    if (updated != null) _pushIncident(updated!);
     addAuditLog(
       userId: updatedBy,
       userRole: 'Fleet Manager',
@@ -732,8 +834,13 @@ class FleetDataProvider extends ChangeNotifier {
 
   void updatePolicyRuleValue(String id, String newValue, {required String updatedBy}) {
     final old = policyRules.firstWhereOrNull((p) => p.id == id);
-    policyRules = policyRules.map((p) => p.id == id ? p.copyWith(value: newValue) : p).toList();
-    _write('fleet_policy_rules', policyRules);
+    PolicyRule? updated;
+    policyRules = policyRules.map((p) {
+      if (p.id != id) return p;
+      updated = p.copyWith(value: newValue);
+      return updated!;
+    }).toList();
+    if (updated != null) _pushPolicyRule(updated!);
     addAuditLog(
       userId: updatedBy,
       userRole: 'System Admin',
@@ -746,8 +853,13 @@ class FleetDataProvider extends ChangeNotifier {
   }
 
   void adjustSparePartStock(String id, int delta, {required String updatedBy}) {
-    spareParts = spareParts.map((s) => s.id == id ? s.copyWith(stockQty: (s.stockQty + delta).clamp(0, 1 << 30).toInt()) : s).toList();
-    _write('fleet_spare_parts', spareParts);
+    SparePart? updated;
+    spareParts = spareParts.map((s) {
+      if (s.id != id) return s;
+      updated = s.copyWith(stockQty: (s.stockQty + delta).clamp(0, 1 << 30).toInt());
+      return updated!;
+    }).toList();
+    if (updated != null) _pushSparePart(updated!);
     notifyListeners();
   }
 
@@ -756,8 +868,13 @@ class FleetDataProvider extends ChangeNotifier {
   // ---------------------------------------------------------------------
 
   void setVehicleStatus(String id, VehicleStatus status) {
-    vehicles = vehicles.map((v) => v.id == id ? v.copyWith(status: status) : v).toList();
-    _write('fleet_vehicles', vehicles);
+    Vehicle? updated;
+    vehicles = vehicles.map((v) {
+      if (v.id != id) return v;
+      updated = v.copyWith(status: status);
+      return updated!;
+    }).toList();
+    if (updated != null) _pushVehicle(updated!);
     notifyListeners();
   }
 }
