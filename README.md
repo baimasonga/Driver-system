@@ -5,11 +5,6 @@ verification, fuel variance detection, and maintenance audits: one **Flutter
 web console** for fleet managers and one **Flutter Android app** for
 drivers, built from a single shared Dart codebase.
 
-## `flutter_app/` — Flutter redesign (web + Android)
-
-This is the primary application going forward. It shares one codebase
-(models, business/fraud-detection logic, and state) across two front-ends:
-
 - **Web console** (`flutter build web`) — vehicles, drivers, trips, fuel
   approvals, maintenance workflow, spare parts & tyres, exceptions
   ("blackbox" investigations), incidents, policy rules, and an immutable
@@ -24,12 +19,11 @@ so a discrepancy raised by a driver's phone shows up immediately in the
 manager's exception queue. Either app can preview the other from its own
 UI for training/demo purposes.
 
-### Run locally
+## Run locally
 
 **Prerequisites:** [Flutter SDK](https://flutter.dev) (stable channel)
 
 ```bash
-cd flutter_app
 flutter pub get
 
 # Web (fleet manager console)
@@ -39,26 +33,22 @@ flutter run -d chrome
 flutter run -d android
 ```
 
-### Build
+## Build
 
 ```bash
-flutter build web      # outputs to flutter_app/build/web
-flutter build apk      # outputs to flutter_app/build/app/outputs/flutter-apk
+flutter build web      # outputs to build/web
+flutter build apk      # outputs to build/app/outputs/flutter-apk
 ```
 
-See `flutter_app/lib/` for the source layout: `models/` (domain types),
-`data/mock_data.dart` (seed data), `state/fleet_data_provider.dart` (shared
-state + business rules), `web/` (manager console screens), `mobile/`
-(driver app screens), and `theme/` (shared dark/amber design tokens).
+## Source layout
 
-## Legacy React/Vite prototype
-
-The original React prototype (`src/`) that this system was redesigned from
-is kept for reference.
-
-**Prerequisites:** Node.js
-
-```bash
-npm install
-npm run dev
-```
+- `lib/models/` — domain types (Vehicle, Driver, Trip, FuelRequest,
+  MaintenanceRequest, ExceptionRecord, AuditLog, PolicyRule, Incident, ...)
+- `lib/data/mock_data.dart` — seed data
+- `lib/state/fleet_data_provider.dart` — shared state (Provider /
+  ChangeNotifier), persistence, and the anti-fraud business rules
+- `lib/web/` — Fleet Manager web console screens
+- `lib/mobile/` — Android driver app screens
+- `lib/root/adaptive_root.dart` — picks the web console vs. driver app
+  based on platform, with an in-app toggle to preview the other
+- `lib/theme/` — shared dark/amber design tokens
