@@ -1,0 +1,9 @@
+{
+  "name": "driver-fleet-accountability",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Cloudflare Pages build entrypoint for the Flutter web console",
+  "scripts": {
+    "build": "bash scripts/build-cloudflare.sh"
+  }
+}
