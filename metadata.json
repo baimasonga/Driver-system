@@ -1,0 +1,6 @@
+{
+  "name": "Driver and Fleet Accountability System",
+  "description": "A comprehensive, high-integrity fleet management, tracking, and auditing system to prevent fuel misuse, inflated maintenance claims, and falsified vehicle reports.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
