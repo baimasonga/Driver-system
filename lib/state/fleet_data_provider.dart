@@ -91,6 +91,31 @@ class FleetDataProvider extends ChangeNotifier {
     super.dispose();
   }
 
+  /// Drops the Realtime subscription and clears in-memory state on sign
+  /// out, since RLS means a signed-out (or different) session can no
+  /// longer see -- or shouldn't keep displaying -- this data.
+  void reset() {
+    if (_channel != null) {
+      _client.removeChannel(_channel!);
+      _channel = null;
+    }
+    vehicles = [];
+    drivers = [];
+    trips = [];
+    fuelRequests = [];
+    maintenanceRequests = [];
+    exceptions = [];
+    incidents = [];
+    auditLogs = [];
+    policyRules = [];
+    spareParts = [];
+    tyres = [];
+    inspections = [];
+    isLoaded = false;
+    loadError = null;
+    notifyListeners();
+  }
+
   Future<void> _reloadVehicles() async {
     final rows = await _client.from('vehicles').select().order('created_at');
     vehicles = rows.map((r) => Vehicle.fromJson(vehicleRowToJson(r))).toList();

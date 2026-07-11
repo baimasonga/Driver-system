@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+import '../state/auth_provider.dart';
 import '../theme/app_theme.dart';
 import 'screens/overview_screen.dart';
 import 'screens/vehicles_screen.dart';
@@ -19,9 +22,7 @@ class NavItem {
 }
 
 class WebDashboardShell extends StatefulWidget {
-  final VoidCallback? onSwitchToMobilePreview;
-
-  const WebDashboardShell({super.key, this.onSwitchToMobilePreview});
+  const WebDashboardShell({super.key});
 
   @override
   State<WebDashboardShell> createState() => _WebDashboardShellState();
@@ -46,6 +47,7 @@ class _WebDashboardShellState extends State<WebDashboardShell> {
   @override
   Widget build(BuildContext context) {
     final wide = MediaQuery.of(context).size.width >= 900;
+    final auth = context.watch<AuthProvider>();
 
     final rail = NavigationRail(
       selectedIndex: _index,
@@ -83,9 +85,9 @@ class _WebDashboardShellState extends State<WebDashboardShell> {
           child: Padding(
             padding: const EdgeInsets.only(bottom: 16),
             child: IconButton(
-              tooltip: 'Preview mobile driver app',
-              onPressed: widget.onSwitchToMobilePreview,
-              icon: const Icon(Icons.phone_android_outlined, color: AppColors.neutral400),
+              tooltip: 'Sign out',
+              onPressed: auth.signOut,
+              icon: const Icon(Icons.logout, color: AppColors.neutral400),
             ),
           ),
         ),
@@ -121,12 +123,16 @@ class _WebDashboardShellState extends State<WebDashboardShell> {
                         style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800),
                       ),
                       const Spacer(),
-                      if (!wide)
-                        TextButton.icon(
-                          onPressed: widget.onSwitchToMobilePreview,
-                          icon: const Icon(Icons.phone_android_outlined, size: 16),
-                          label: const Text('Driver App'),
+                      if (auth.profile?.fullName != null)
+                        Text(auth.profile!.fullName!, style: const TextStyle(color: AppColors.neutral400, fontSize: 12)),
+                      if (!wide) ...[
+                        const SizedBox(width: 12),
+                        IconButton(
+                          tooltip: 'Sign out',
+                          onPressed: auth.signOut,
+                          icon: const Icon(Icons.logout, size: 18),
                         ),
+                      ],
                     ],
                   ),
                 ),

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../state/auth_provider.dart';
 import '../state/driver_session.dart';
 import '../theme/app_theme.dart';
 import 'screens/home_tab.dart';
@@ -11,10 +12,8 @@ import 'screens/more_tab.dart';
 
 class DriverAppShell extends StatefulWidget {
   final String driverId;
-  final VoidCallback? onSwitchToWebPreview;
-  final VoidCallback? onSwitchDriver;
 
-  const DriverAppShell({super.key, required this.driverId, this.onSwitchToWebPreview, this.onSwitchDriver});
+  const DriverAppShell({super.key, required this.driverId});
 
   @override
   State<DriverAppShell> createState() => _DriverAppShellState();
@@ -26,12 +25,13 @@ class _DriverAppShellState extends State<DriverAppShell> {
 
   @override
   Widget build(BuildContext context) {
+    final auth = context.read<AuthProvider>();
     final tabs = [
       const HomeTab(),
       const TripsTab(),
       const FuelTab(),
       const MaintenanceTab(),
-      MoreTab(onSwitchDriver: widget.onSwitchDriver),
+      MoreTab(onSignOut: auth.signOut),
     ];
 
     return ChangeNotifierProvider.value(
@@ -51,12 +51,6 @@ class _DriverAppShellState extends State<DriverAppShell> {
                 ),
               ),
             ),
-            if (widget.onSwitchToWebPreview != null)
-              IconButton(
-                tooltip: 'Preview web console',
-                onPressed: widget.onSwitchToWebPreview,
-                icon: const Icon(Icons.laptop_mac_outlined),
-              ),
           ],
         ),
         body: IndexedStack(index: _index, children: tabs),

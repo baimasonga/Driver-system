@@ -8,9 +8,9 @@ import '../../utils/formatters.dart';
 import '../../widgets/status_badge.dart';
 
 class MoreTab extends StatelessWidget {
-  final VoidCallback? onSwitchDriver;
+  final VoidCallback? onSignOut;
 
-  const MoreTab({super.key, this.onSwitchDriver});
+  const MoreTab({super.key, this.onSignOut});
 
   @override
   Widget build(BuildContext context) {
@@ -70,11 +70,11 @@ class MoreTab extends StatelessWidget {
             title: Text(driver.name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
             subtitle: Text(driver.email, style: const TextStyle(color: AppColors.neutral400, fontSize: 11.5)),
           ),
-        if (onSwitchDriver != null)
+        if (onSignOut != null)
           OutlinedButton.icon(
-            onPressed: onSwitchDriver,
-            icon: const Icon(Icons.swap_horiz, size: 16),
-            label: const Text('Switch Driver'),
+            onPressed: onSignOut,
+            icon: const Icon(Icons.logout, size: 16),
+            label: const Text('Sign Out'),
           ),
       ],
     );

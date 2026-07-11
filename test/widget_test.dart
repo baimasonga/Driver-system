@@ -1,10 +1,10 @@
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:fleet_flutter/config/supabase_config.dart';
 import 'package:fleet_flutter/main.dart';
+import 'package:fleet_flutter/root/screens/login_screen.dart';
 
 void main() {
   setUpAll(() async {
@@ -16,9 +16,9 @@ void main() {
     );
   });
 
-  testWidgets('App boots and shows a loading state before data loads', (WidgetTester tester) async {
+  testWidgets('App boots to the sign-in screen when signed out', (WidgetTester tester) async {
     await tester.pumpWidget(const FleetApp());
 
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.byType(LoginScreen), findsOneWidget);
   });
 }
