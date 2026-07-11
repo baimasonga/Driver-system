@@ -24,8 +24,50 @@ class AdaptiveRoot extends StatelessWidget {
       return const LoginScreen();
     }
 
-    if (auth.isLoadingProfile || auth.profile == null) {
+    if (auth.isLoadingProfile) {
       return const _FullScreenSpinner();
+    }
+
+    if (auth.profile == null) {
+      return Scaffold(
+        backgroundColor: AppColors.neutral950,
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 520),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.account_circle_outlined, color: AppColors.red500, size: 42),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Your account profile could not be loaded',
+                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    auth.profileError ?? 'No profile record is linked to this account.',
+                    style: const TextStyle(color: AppColors.neutral400, fontSize: 12),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 20),
+                  Wrap(
+                    spacing: 12,
+                    runSpacing: 12,
+                    alignment: WrapAlignment.center,
+                    children: [
+                      ElevatedButton(onPressed: auth.retryProfile, child: const Text('Retry')),
+                      OutlinedButton(onPressed: auth.signOut, child: const Text('Sign Out')),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
     }
 
     final data = context.watch<FleetDataProvider>();

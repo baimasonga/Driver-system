@@ -36,6 +36,7 @@ class AuthProvider extends ChangeNotifier {
   AppProfile? profile;
   bool isLoadingProfile = false;
   String? authError;
+  String? profileError;
 
   AuthProvider() {
     session = _client.auth.currentSession;
@@ -43,6 +44,7 @@ class AuthProvider extends ChangeNotifier {
       session = state.session;
       if (session == null) {
         profile = null;
+        profileError = null;
         notifyListeners();
       } else {
         _loadProfile();
@@ -53,6 +55,7 @@ class AuthProvider extends ChangeNotifier {
 
   Future<void> _loadProfile() async {
     isLoadingProfile = true;
+    profileError = null;
     notifyListeners();
     try {
       final row = await _client.from('profiles').select().eq('id', session!.user.id).single();
@@ -60,11 +63,14 @@ class AuthProvider extends ChangeNotifier {
     } catch (error) {
       debugPrint('Failed to load profile: $error');
       profile = null;
+      profileError = 'Could not load your account profile: $error';
     } finally {
       isLoadingProfile = false;
       notifyListeners();
     }
   }
+
+  Future<void> retryProfile() => _loadProfile();
 
   Future<bool> signIn(String email, String password) async {
     authError = null;

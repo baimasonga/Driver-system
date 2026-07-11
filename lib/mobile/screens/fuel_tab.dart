@@ -98,13 +98,23 @@ class FuelTab extends StatelessWidget {
                 width: double.infinity,
                 child: ElevatedButton(
                   onPressed: () {
+                    final enteredOdometer = double.tryParse(odoController.text.trim());
+                    final liters = double.tryParse(litersController.text.trim());
+                    final cost = double.tryParse(costController.text.trim());
+                    final station = stationController.text.trim();
+                    if (enteredOdometer == null || enteredOdometer < odometer || liters == null || liters <= 0 || cost == null || cost <= 0 || station.isEmpty) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Enter a valid station, odometer, litres, and cost.')),
+                      );
+                      return;
+                    }
                     data.submitFuelRequest(
                       vehicleId: vehicleId,
                       driverId: driverId,
-                      odometer: double.tryParse(odoController.text) ?? odometer,
-                      requestedLiters: double.tryParse(litersController.text) ?? 0,
-                      estimatedCost: double.tryParse(costController.text) ?? 0,
-                      stationName: stationController.text,
+                      odometer: enteredOdometer,
+                      requestedLiters: liters,
+                      estimatedCost: cost,
+                      stationName: station,
                       receiptPhotoUrl: 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&q=80&w=300',
                       pumpPhotoUrl: 'https://images.unsplash.com/photo-1527018601619-a508a2be00cd?auto=format&fit=crop&q=80&w=300',
                     );

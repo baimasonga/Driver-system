@@ -14,12 +14,13 @@ class TripsTab extends StatelessWidget {
   Widget build(BuildContext context) {
     final data = context.watch<FleetDataProvider>();
     final session = context.watch<DriverSession>();
+    final vehicle = data.vehicleForDriver(session.driverId);
     final myTrips = data.trips.where((t) => t.driverId == session.driverId).toList();
 
     return Scaffold(
       backgroundColor: Colors.transparent,
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _showRequestSheet(context, data, session.driverId),
+        onPressed: vehicle == null ? null : () => _showRequestSheet(context, data, session.driverId),
         icon: const Icon(Icons.add),
         label: const Text('Request Trip'),
       ),
@@ -86,14 +87,23 @@ class TripsTab extends StatelessWidget {
                 child: ElevatedButton(
                   onPressed: () {
                     if (vehicle == null) return;
+                    final pickup = pickupController.text.trim();
+                    final destination = destinationController.text.trim();
+                    final purpose = purposeController.text.trim();
+                    if (pickup.isEmpty || destination.isEmpty || purpose.isEmpty) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Complete pickup point, destination, and purpose.')),
+                      );
+                      return;
+                    }
                     data.requestTrip(
                       vehicleId: vehicle.id,
                       driverId: driverId,
                       department: vehicle.assignedDepartment,
                       passengers: const [],
-                      purpose: purposeController.text.isEmpty ? 'Operational trip' : purposeController.text,
-                      pickupPoint: pickupController.text,
-                      destination: destinationController.text.isEmpty ? 'Unspecified' : destinationController.text,
+                      purpose: purpose,
+                      pickupPoint: pickup,
+                      destination: destination,
                     );
                     Navigator.pop(context);
                   },

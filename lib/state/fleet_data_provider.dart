@@ -36,9 +36,12 @@ class FleetDataProvider extends ChangeNotifier {
   List<Inspection> inspections = [];
 
   bool isLoaded = false;
+  bool isLoading = false;
   String? loadError;
 
   Future<void> load() async {
+    if (isLoading) return;
+    isLoading = true;
     try {
       await Future.wait([
         _reloadVehicles(),
@@ -63,12 +66,16 @@ class FleetDataProvider extends ChangeNotifier {
       debugPrint('FleetDataProvider.load failed: $error');
       loadError = error.toString();
     } finally {
+      isLoading = false;
       isLoaded = true;
       notifyListeners();
     }
   }
 
   void _subscribeRealtime() {
+    if (_channel != null) {
+      _client.removeChannel(_channel!);
+    }
     _channel = _client.channel('public:fleet-sync')
       ..onPostgresChanges(event: PostgresChangeEvent.all, schema: 'public', table: 'vehicles', callback: (_) => _reloadVehicles().then((_) => notifyListeners()))
       ..onPostgresChanges(event: PostgresChangeEvent.all, schema: 'public', table: 'drivers', callback: (_) => _reloadDrivers().then((_) => notifyListeners()))
@@ -112,6 +119,7 @@ class FleetDataProvider extends ChangeNotifier {
     tyres = [];
     inspections = [];
     isLoaded = false;
+    isLoading = false;
     loadError = null;
     notifyListeners();
   }

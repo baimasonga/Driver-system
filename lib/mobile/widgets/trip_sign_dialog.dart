@@ -95,20 +95,28 @@ class _TripSignSheetState extends State<_TripSignSheet> {
               width: double.infinity,
               child: ElevatedButton(
                 onPressed: () {
-                  final odo = double.tryParse(_odoController.text) ?? 0;
+                  final odo = double.tryParse(_odoController.text.trim());
+                  final minimumOdometer = trip.signOutOdometer ?? data.vehicleById(trip.vehicleId)?.currentOdometer ?? 0;
+                  final officer = _officerController.text.trim();
+                  if (odo == null || odo < minimumOdometer || officer.isEmpty) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Enter a valid odometer reading and signing officer.')),
+                    );
+                    return;
+                  }
                   if (widget.isSignIn) {
                     data.signInTrip(
                       trip.id,
                       odometer: odo,
                       fuelLevel: _fuelLevel,
-                      officerName: _officerController.text,
+                      officerName: officer,
                     );
                   } else {
                     data.signOutTrip(
                       trip.id,
                       odometer: odo,
                       fuelLevel: _fuelLevel,
-                      officerName: _officerController.text,
+                      officerName: officer,
                     );
                   }
                   Navigator.pop(context);
