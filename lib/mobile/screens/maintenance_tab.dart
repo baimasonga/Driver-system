@@ -112,7 +112,7 @@ class MaintenanceTab extends StatelessWidget {
                           description: descController.text.isEmpty ? 'Unspecified fault reported by driver.' : descController.text,
                           severity: severity,
                           odometer: odometer,
-                          beforePhotoUrl: 'https://images.unsplash.com/photo-1486006920555-c77dce18193b?auto=format&fit=crop&q=80&w=300',
+                          beforePhotoUrl: null,
                         );
                         navigator.pop();
                         messenger.showSnackBar(
