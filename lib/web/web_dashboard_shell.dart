@@ -9,6 +9,7 @@ import 'screens/drivers_screen.dart';
 import 'screens/trips_screen.dart';
 import 'screens/fuel_screen.dart';
 import 'screens/maintenance_screen.dart';
+import 'screens/service_forecast_screen.dart';
 import 'screens/exceptions_screen.dart';
 import 'screens/policies_screen.dart';
 import 'screens/incidents_screen.dart';
@@ -38,6 +39,7 @@ class _WebDashboardShellState extends State<WebDashboardShell> {
     NavItem('Trip Operations', Icons.route_outlined, () => const TripsScreen()),
     NavItem('Fuel Audits & Approvals', Icons.local_gas_station_outlined, () => const FuelScreen()),
     NavItem('Maintenance Work Orders', Icons.build_outlined, () => const MaintenanceScreen()),
+    NavItem('Service Forecast', Icons.monitor_heart_outlined, () => const ServiceForecastScreen()),
     NavItem('Exceptions', Icons.gpp_maybe_outlined, () => const ExceptionsScreen()),
     NavItem('Incidents', Icons.report_gmailerrorred_outlined, () => const IncidentsScreen()),
     NavItem('Policies', Icons.rule_folder_outlined, () => const PoliciesScreen()),
