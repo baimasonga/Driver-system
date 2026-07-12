@@ -6,6 +6,7 @@ export 'inspection.dart';
 export 'fuel_request.dart';
 export 'maintenance_request.dart';
 export 'maintenance_part_movement.dart';
+export 'service_forecast.dart';
 export 'spare_part.dart';
 export 'tyre.dart';
 export 'exception_record.dart';
