@@ -85,27 +85,38 @@ class TripsTab extends StatelessWidget {
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
-                  onPressed: () {
+                  onPressed: () async {
                     if (vehicle == null) return;
+                    final messenger = ScaffoldMessenger.of(context);
+                    final navigator = Navigator.of(context);
                     final pickup = pickupController.text.trim();
                     final destination = destinationController.text.trim();
                     final purpose = purposeController.text.trim();
                     if (pickup.isEmpty || destination.isEmpty || purpose.isEmpty) {
-                      ScaffoldMessenger.of(context).showSnackBar(
+                      messenger.showSnackBar(
                         const SnackBar(content: Text('Complete pickup point, destination, and purpose.')),
                       );
                       return;
                     }
-                    data.requestTrip(
-                      vehicleId: vehicle.id,
-                      driverId: driverId,
-                      department: vehicle.assignedDepartment,
-                      passengers: const [],
-                      purpose: purpose,
-                      pickupPoint: pickup,
-                      destination: destination,
-                    );
-                    Navigator.pop(context);
+                    try {
+                      await data.requestTrip(
+                        vehicleId: vehicle.id,
+                        driverId: driverId,
+                        department: vehicle.assignedDepartment,
+                        passengers: const [],
+                        purpose: purpose,
+                        pickupPoint: pickup,
+                        destination: destination,
+                      );
+                      navigator.pop();
+                      messenger.showSnackBar(
+                        const SnackBar(content: Text('Trip request submitted for approval.')),
+                      );
+                    } catch (e) {
+                      messenger.showSnackBar(
+                        SnackBar(content: Text('Could not submit trip request: $e')),
+                      );
+                    }
                   },
                   child: const Text('Submit Request'),
                 ),

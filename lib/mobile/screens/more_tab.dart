@@ -129,23 +129,29 @@ class MoreTab extends StatelessWidget {
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
-                    onPressed: () {
-                      data.submitInspection(
-                        vehicleId: vehicleId,
-                        driverId: driverId,
-                        type: type,
-                        fuelLevelOk: checks['Fuel level OK']!,
-                        oilLevelOk: checks['Oil level OK']!,
-                        coolantOk: checks['Coolant OK']!,
-                        tyresOk: checks['Tyres OK']!,
-                        brakesOk: checks['Brakes OK']!,
-                        lightsOk: checks['Lights OK']!,
-                        bodyConditionOk: checks['Body condition OK']!,
-                        spareTyreToolsOk: checks['Spare tyre & tools OK']!,
-                        notes: notesController.text.isEmpty ? null : notesController.text,
-                      );
-                      Navigator.pop(context);
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Inspection submitted.')));
+                    onPressed: () async {
+                      final messenger = ScaffoldMessenger.of(context);
+                      final navigator = Navigator.of(context);
+                      try {
+                        await data.submitInspection(
+                          vehicleId: vehicleId,
+                          driverId: driverId,
+                          type: type,
+                          fuelLevelOk: checks['Fuel level OK']!,
+                          oilLevelOk: checks['Oil level OK']!,
+                          coolantOk: checks['Coolant OK']!,
+                          tyresOk: checks['Tyres OK']!,
+                          brakesOk: checks['Brakes OK']!,
+                          lightsOk: checks['Lights OK']!,
+                          bodyConditionOk: checks['Body condition OK']!,
+                          spareTyreToolsOk: checks['Spare tyre & tools OK']!,
+                          notes: notesController.text.isEmpty ? null : notesController.text,
+                        );
+                        navigator.pop();
+                        messenger.showSnackBar(const SnackBar(content: Text('Inspection submitted.')));
+                      } catch (e) {
+                        messenger.showSnackBar(SnackBar(content: Text('Could not submit inspection: $e')));
+                      }
                     },
                     child: const Text('Submit Inspection'),
                   ),
@@ -196,18 +202,26 @@ class MoreTab extends StatelessWidget {
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
-                    onPressed: () {
-                      data.reportIncident(
-                        category: category,
-                        vehicleId: vehicleId,
-                        driverId: driverId,
-                        description: descController.text.isEmpty ? 'No further details provided.' : descController.text,
-                        location: locationController.text.isEmpty ? 'Unspecified' : locationController.text,
-                      );
-                      Navigator.pop(context);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Incident reported. Security notified.')),
-                      );
+                    onPressed: () async {
+                      final messenger = ScaffoldMessenger.of(context);
+                      final navigator = Navigator.of(context);
+                      try {
+                        await data.reportIncident(
+                          category: category,
+                          vehicleId: vehicleId,
+                          driverId: driverId,
+                          description: descController.text.isEmpty ? 'No further details provided.' : descController.text,
+                          location: locationController.text.isEmpty ? 'Unspecified' : locationController.text,
+                        );
+                        navigator.pop();
+                        messenger.showSnackBar(
+                          const SnackBar(content: Text('Incident reported. Security notified.')),
+                        );
+                      } catch (e) {
+                        messenger.showSnackBar(
+                          SnackBar(content: Text('Could not report incident: $e')),
+                        );
+                      }
                     },
                     child: const Text('Submit Report'),
                   ),

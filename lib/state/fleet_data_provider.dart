@@ -291,21 +291,14 @@ class FleetDataProvider extends ChangeNotifier {
   // above is the source of truth other clients reconcile against.
   // ---------------------------------------------------------------------
 
+  // Best-effort background writes still used for secondary/derived state
+  // (vehicle status changes, exception status toggles, spare-part stock,
+  // audit lines) where a silent retry-on-next-reload is acceptable.
   void _pushVehicle(Vehicle v) => _upsert('vehicles', vehicleToRow(v));
-  void _pushTrip(Trip t) => _upsert('trips', tripToRow(t));
-  void _pushFuelRequest(FuelRequest f) =>
-      _upsert('fuel_requests', fuelRequestToRow(f));
-  void _pushMaintenanceRequest(MaintenanceRequest m) =>
-      _upsert('maintenance_requests', maintenanceRequestToRow(m));
   void _pushException(ExceptionRecord e) =>
       _upsert('exception_records', exceptionToRow(e));
-  void _pushIncident(Incident i) => _upsert('incidents', incidentToRow(i));
   void _pushAuditLog(AuditLog l) => _upsert('audit_logs', auditLogToRow(l));
-  void _pushPolicyRule(PolicyRule p) =>
-      _upsert('policy_rules', policyRuleToRow(p));
   void _pushSparePart(SparePart s) => _upsert('spare_parts', sparePartToRow(s));
-  void _pushInspection(Inspection i) =>
-      _upsert('inspections', inspectionToRow(i));
 
   void _upsert(String table, Map<String, dynamic> row) {
     _client.from(table).upsert(row).catchError((Object error) {
@@ -313,6 +306,13 @@ class FleetDataProvider extends ChangeNotifier {
       return <Map<String, dynamic>>[];
     });
   }
+
+  /// Awaited write that throws on failure. Use this for records the user
+  /// must know actually landed (a trip request, a fuel claim, a gate
+  /// sign-in) so the caller can surface an error instead of the write
+  /// silently vanishing on the next Realtime reload.
+  Future<void> _persist(String table, Map<String, dynamic> row) =>
+      _client.from(table).upsert(row);
 
   String _genId(String prefix) =>
       '$prefix-${DateTime.now().microsecondsSinceEpoch}${_rng.nextInt(999)}';
@@ -554,14 +554,17 @@ class FleetDataProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _raiseException({
+  /// Raises an auto-detected fraud/policy exception. Best-effort: it is a
+  /// side effect of a primary action that has already persisted, so a
+  /// failure here is logged rather than surfaced to the user.
+  Future<void> _raiseException({
     required String type,
     required ExceptionSeverity severity,
     required String title,
     required String description,
     required String vehicleId,
     String? driverId,
-  }) {
+  }) async {
     final newException = ExceptionRecord(
       id: _genId('exc'),
       type: type,
@@ -573,8 +576,12 @@ class FleetDataProvider extends ChangeNotifier {
       timestamp: DateTime.now().toIso8601String(),
       status: 'Open',
     );
+    try {
+      await _persist('exception_records', exceptionToRow(newException));
+    } catch (error) {
+      debugPrint('Failed to persist exception: $error');
+    }
     exceptions = [newException, ...exceptions];
-    _pushException(newException);
     addAuditLog(
       userId: 'System (Fraud Detection)',
       userRole: 'Security Core',
@@ -628,7 +635,7 @@ class FleetDataProvider extends ChangeNotifier {
   // Sign-In (Gate) -> Completed / Flagged
   // ---------------------------------------------------------------------
 
-  Trip requestTrip({
+  Future<Trip> requestTrip({
     required String vehicleId,
     required String driverId,
     required String department,
@@ -637,7 +644,7 @@ class FleetDataProvider extends ChangeNotifier {
     required String purpose,
     required String pickupPoint,
     required String destination,
-  }) {
+  }) async {
     final trip = Trip(
       id: _genId('t'),
       tripRequestNumber: 'TRIP-${DateTime.now().year}-${(trips.length + 1000)}',
@@ -652,8 +659,10 @@ class FleetDataProvider extends ChangeNotifier {
       status: TripStatus.requested,
       requestedAt: DateTime.now().toIso8601String(),
     );
+    // Persist first so a rejected write surfaces as an error instead of a
+    // phantom row that disappears on the next Realtime reload.
+    await _persist('trips', tripToRow(trip));
     trips = [trip, ...trips];
-    _pushTrip(trip);
     final driver = driverById(driverId);
     addAuditLog(
       userId: driver?.name ?? driverId,
@@ -721,12 +730,12 @@ class FleetDataProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  void signOutTrip(
+  Future<void> signOutTrip(
     String tripId, {
     required double odometer,
     required double fuelLevel,
     required String officerName,
-  }) {
+  }) async {
     final trip = trips.firstWhereOrNull((t) => t.id == tripId);
     if (trip == null) return;
     // Simulate the tamper-proof GPS tracker's expected route distance for
@@ -742,17 +751,19 @@ class FleetDataProvider extends ChangeNotifier {
       signOutTime: DateTime.now().toIso8601String(),
       gpsDistanceKm: simulatedGpsDistanceKm,
     );
+    await _persist('trips', tripToRow(updatedTrip));
     trips = trips.map((t) => t.id == tripId ? updatedTrip : t).toList();
-    _pushTrip(updatedTrip);
 
     final updatedVehicle = vehicles
         .firstWhereOrNull((v) => v.id == trip.vehicleId)
         ?.copyWith(status: VehicleStatus.active);
     if (updatedVehicle != null) {
+      // Secondary write -- keep it best-effort so a vehicle-status hiccup
+      // does not fail the whole sign-out after the trip already persisted.
+      _pushVehicle(updatedVehicle);
       vehicles = vehicles
           .map((v) => v.id == trip.vehicleId ? updatedVehicle : v)
           .toList();
-      _pushVehicle(updatedVehicle);
     }
 
     addAuditLog(
@@ -770,13 +781,13 @@ class FleetDataProvider extends ChangeNotifier {
   /// Ends a trip and runs the odometer-vs-GPS fraud check.
   /// [gpsDistanceKm] simulates the tamper-proof tracker reading; if omitted
   /// the trip's existing value (or the reported distance) is used.
-  void signInTrip(
+  Future<void> signInTrip(
     String tripId, {
     required double odometer,
     required double fuelLevel,
     required String officerName,
     double? gpsDistanceKm,
-  }) {
+  }) async {
     final trip = trips.firstWhereOrNull((t) => t.id == tripId);
     if (trip == null) return;
     final driver = driverById(trip.driverId);
@@ -797,17 +808,17 @@ class FleetDataProvider extends ChangeNotifier {
       gpsDistanceKm: gpsDist,
       routeDeviationFlagged: fraudDetected,
     );
+    await _persist('trips', tripToRow(updatedTrip));
     trips = trips.map((t) => t.id == tripId ? updatedTrip : t).toList();
-    _pushTrip(updatedTrip);
 
     final updatedVehicle = vehicles
         .firstWhereOrNull((v) => v.id == trip.vehicleId)
         ?.copyWith(currentOdometer: odometer, status: VehicleStatus.parked);
     if (updatedVehicle != null) {
+      _pushVehicle(updatedVehicle);
       vehicles = vehicles
           .map((v) => v.id == trip.vehicleId ? updatedVehicle : v)
           .toList();
-      _pushVehicle(updatedVehicle);
     }
 
     addAuditLog(
@@ -821,7 +832,7 @@ class FleetDataProvider extends ChangeNotifier {
     );
 
     if (fraudDetected) {
-      _raiseException(
+      await _raiseException(
         type: 'Trip',
         severity: ExceptionSeverity.high,
         title: 'Odometer Inflation / Route Falsification',
@@ -840,7 +851,7 @@ class FleetDataProvider extends ChangeNotifier {
   // Fuel: driver submits -> manager approves/rejects -> variance detection
   // ---------------------------------------------------------------------
 
-  FuelRequest submitFuelRequest({
+  Future<FuelRequest> submitFuelRequest({
     required String vehicleId,
     required String driverId,
     required double odometer,
@@ -849,7 +860,7 @@ class FleetDataProvider extends ChangeNotifier {
     required String stationName,
     String? receiptPhotoUrl,
     String? pumpPhotoUrl,
-  }) {
+  }) async {
     final req = FuelRequest(
       id: _genId('f'),
       vehicleId: vehicleId,
@@ -864,8 +875,8 @@ class FleetDataProvider extends ChangeNotifier {
       receiptPhotoUrl: receiptPhotoUrl,
       pumpPhotoUrl: pumpPhotoUrl,
     );
+    await _persist('fuel_requests', fuelRequestToRow(req));
     fuelRequests = [req, ...fuelRequests];
-    _pushFuelRequest(req);
     final driver = driverById(driverId);
     addAuditLog(
       userId: driver?.name ?? driverId,
@@ -957,7 +968,7 @@ class FleetDataProvider extends ChangeNotifier {
     );
 
     if (flagged) {
-      _raiseException(
+      await _raiseException(
         type: 'Fuel',
         severity: ExceptionSeverity.critical,
         title: 'Extreme Fuel Consumption Variance',
@@ -1005,7 +1016,7 @@ class FleetDataProvider extends ChangeNotifier {
   // Maintenance: Pending -> Approved -> In Garage -> Completed -> Verified
   // ---------------------------------------------------------------------
 
-  MaintenanceRequest submitMaintenanceRequest({
+  Future<MaintenanceRequest> submitMaintenanceRequest({
     required String vehicleId,
     required String driverId,
     required String category,
@@ -1013,7 +1024,7 @@ class FleetDataProvider extends ChangeNotifier {
     required String severity,
     required double odometer,
     String? beforePhotoUrl,
-  }) {
+  }) async {
     final req = MaintenanceRequest(
       id: _genId('m'),
       vehicleId: vehicleId,
@@ -1026,8 +1037,8 @@ class FleetDataProvider extends ChangeNotifier {
       status: MaintenanceStatus.pending,
       beforePhotoUrl: beforePhotoUrl,
     );
+    await _persist('maintenance_requests', maintenanceRequestToRow(req));
     maintenanceRequests = [req, ...maintenanceRequests];
-    _pushMaintenanceRequest(req);
     final driver = driverById(driverId);
     addAuditLog(
       userId: driver?.name ?? driverId,
@@ -1147,7 +1158,7 @@ class FleetDataProvider extends ChangeNotifier {
         req.approvedAmount != null &&
         (invoiceAmount - req.approvedAmount!).abs() >
             req.approvedAmount! * 0.15) {
-      _raiseException(
+      await _raiseException(
         type: 'Maintenance',
         severity: ExceptionSeverity.medium,
         title: 'Invoice Exceeds Approved Quotation',
@@ -1206,7 +1217,7 @@ class FleetDataProvider extends ChangeNotifier {
   // Inspections (pre/post trip checklist)
   // ---------------------------------------------------------------------
 
-  Inspection submitInspection({
+  Future<Inspection> submitInspection({
     String? tripId,
     required String vehicleId,
     required String driverId,
@@ -1220,7 +1231,7 @@ class FleetDataProvider extends ChangeNotifier {
     required bool bodyConditionOk,
     required bool spareTyreToolsOk,
     String? notes,
-  }) {
+  }) async {
     final insp = Inspection(
       id: _genId('insp'),
       tripId: tripId,
@@ -1238,8 +1249,8 @@ class FleetDataProvider extends ChangeNotifier {
       spareTyreToolsOk: spareTyreToolsOk,
       notes: notes,
     );
+    await _persist('inspections', inspectionToRow(insp));
     inspections = [insp, ...inspections];
-    _pushInspection(insp);
     final driver = driverById(driverId);
     addAuditLog(
       userId: driver?.name ?? driverId,
@@ -1252,7 +1263,7 @@ class FleetDataProvider extends ChangeNotifier {
           : 'One or more checklist items failed: ${notes ?? ''}',
     );
     if (!insp.allPassed) {
-      _raiseException(
+      await _raiseException(
         type: 'Trip',
         severity: ExceptionSeverity.medium,
         title: '$type Inspection Failed Checklist Item(s)',
@@ -1271,14 +1282,14 @@ class FleetDataProvider extends ChangeNotifier {
   // Incidents
   // ---------------------------------------------------------------------
 
-  Incident reportIncident({
+  Future<Incident> reportIncident({
     required String category,
     required String vehicleId,
     required String driverId,
     required String description,
     required String location,
     String? photoUrl,
-  }) {
+  }) async {
     final incident = Incident(
       id: _genId('in'),
       category: category,
@@ -1290,8 +1301,8 @@ class FleetDataProvider extends ChangeNotifier {
       photoUrl: photoUrl,
       status: 'Pending',
     );
+    await _persist('incidents', incidentToRow(incident));
     incidents = [incident, ...incidents];
-    _pushIncident(incident);
     final driver = driverById(driverId);
     addAuditLog(
       userId: driver?.name ?? driverId,
