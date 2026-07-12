@@ -101,20 +101,28 @@ class MaintenanceTab extends StatelessWidget {
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
-                    onPressed: () {
-                      data.submitMaintenanceRequest(
-                        vehicleId: vehicleId,
-                        driverId: driverId,
-                        category: category,
-                        description: descController.text.isEmpty ? 'Unspecified fault reported by driver.' : descController.text,
-                        severity: severity,
-                        odometer: odometer,
-                        beforePhotoUrl: 'https://images.unsplash.com/photo-1486006920555-c77dce18193b?auto=format&fit=crop&q=80&w=300',
-                      );
-                      Navigator.pop(context);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Defect logged. Fleet manager notified.')),
-                      );
+                    onPressed: () async {
+                      final messenger = ScaffoldMessenger.of(context);
+                      final navigator = Navigator.of(context);
+                      try {
+                        await data.submitMaintenanceRequest(
+                          vehicleId: vehicleId,
+                          driverId: driverId,
+                          category: category,
+                          description: descController.text.isEmpty ? 'Unspecified fault reported by driver.' : descController.text,
+                          severity: severity,
+                          odometer: odometer,
+                          beforePhotoUrl: 'https://images.unsplash.com/photo-1486006920555-c77dce18193b?auto=format&fit=crop&q=80&w=300',
+                        );
+                        navigator.pop();
+                        messenger.showSnackBar(
+                          const SnackBar(content: Text('Defect logged. Fleet manager notified.')),
+                        );
+                      } catch (e) {
+                        messenger.showSnackBar(
+                          SnackBar(content: Text('Could not log defect: $e')),
+                        );
+                      }
                     },
                     child: const Text('Submit Report'),
                   ),

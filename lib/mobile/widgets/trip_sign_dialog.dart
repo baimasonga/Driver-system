@@ -94,35 +94,43 @@ class _TripSignSheetState extends State<_TripSignSheet> {
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: () {
+                onPressed: () async {
+                  final messenger = ScaffoldMessenger.of(context);
+                  final navigator = Navigator.of(context);
                   final odo = double.tryParse(_odoController.text.trim());
                   final minimumOdometer = trip.signOutOdometer ?? data.vehicleById(trip.vehicleId)?.currentOdometer ?? 0;
                   final officer = _officerController.text.trim();
                   if (odo == null || odo < minimumOdometer || officer.isEmpty) {
-                    ScaffoldMessenger.of(context).showSnackBar(
+                    messenger.showSnackBar(
                       const SnackBar(content: Text('Enter a valid odometer reading and signing officer.')),
                     );
                     return;
                   }
-                  if (widget.isSignIn) {
-                    data.signInTrip(
-                      trip.id,
-                      odometer: odo,
-                      fuelLevel: _fuelLevel,
-                      officerName: officer,
+                  try {
+                    if (widget.isSignIn) {
+                      await data.signInTrip(
+                        trip.id,
+                        odometer: odo,
+                        fuelLevel: _fuelLevel,
+                        officerName: officer,
+                      );
+                    } else {
+                      await data.signOutTrip(
+                        trip.id,
+                        odometer: odo,
+                        fuelLevel: _fuelLevel,
+                        officerName: officer,
+                      );
+                    }
+                    navigator.pop();
+                    messenger.showSnackBar(
+                      SnackBar(content: Text(widget.isSignIn ? 'Trip completed and submitted.' : 'Trip started. Drive safe.')),
                     );
-                  } else {
-                    data.signOutTrip(
-                      trip.id,
-                      odometer: odo,
-                      fuelLevel: _fuelLevel,
-                      officerName: officer,
+                  } catch (e) {
+                    messenger.showSnackBar(
+                      SnackBar(content: Text('Could not ${widget.isSignIn ? 'complete' : 'start'} trip: $e')),
                     );
                   }
-                  Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text(widget.isSignIn ? 'Trip completed and submitted.' : 'Trip started. Drive safe.')),
-                  );
                 },
                 child: Text(widget.isSignIn ? 'Submit & Complete Trip' : 'Confirm & Start Trip'),
               ),
