@@ -26,11 +26,25 @@ class OverviewScreen extends StatelessWidget {
     final lowStockParts = data.spareParts.where((p) => p.stockQty <= p.reorderLevel).length;
     final partSwaps = data.maintenancePartMovements.length;
     final openWorkOrders = data.maintenanceRequests.where((m) => m.status != MaintenanceStatus.verified).length;
+    final overdueServiceVehicles = data.vehicles.where((v) =>
+      ServiceForecastEngine.calculate(v, data.trips, data.maintenanceRequests).hasOverdueComponent).length;
 
     return SingleChildScrollView(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          if (overdueServiceVehicles > 0) ...[
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(color: AppColors.red500.withOpacity(.1), borderRadius: BorderRadius.circular(16), border: Border.all(color: AppColors.red500.withOpacity(.55))),
+              child: Row(children: [
+                const Icon(Icons.warning_amber_rounded, color: AppColors.red500),
+                const SizedBox(width: 12),
+                Expanded(child: Text('$overdueServiceVehicles vehicle(s) have components beyond standard service intervals. Open Service Forecast and create preventive work orders.', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700))),
+              ]),
+            ),
+            const SizedBox(height: 16),
+          ],
           LayoutBuilder(builder: (context, constraints) {
             final cross = constraints.maxWidth > 900 ? 5 : (constraints.maxWidth > 560 ? 3 : 2);
             return GridView.count(
