@@ -65,13 +65,17 @@ class FuelTab extends StatelessWidget {
     final litersController = TextEditingController(text: '40');
     final costController = TextEditingController(text: '80');
     final stationController = TextEditingController(text: 'TotalEnergies Wilberforce');
+    final receiptController = TextEditingController();
+    final cardReferenceController = TextEditingController();
+    final unitPriceController = TextEditingController(text: '2');
+    String paymentMethod = 'Cash';
 
     showModalBottomSheet(
       context: context,
       backgroundColor: AppColors.neutral900,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-      builder: (context) => Padding(
+      builder: (context) => StatefulBuilder(builder: (context, setSheetState) => Padding(
         padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom, left: 20, right: 20, top: 20),
         child: SingleChildScrollView(
           child: Column(
@@ -80,9 +84,22 @@ class FuelTab extends StatelessWidget {
             children: [
               const Text('Request Fuel', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16)),
               const SizedBox(height: 4),
-              const Text('Attach receipt & pump photos before submitting in the production app.', style: TextStyle(color: AppColors.neutral400, fontSize: 11.5)),
+              const Text('Capture the receipt and payment references used for audit reconciliation.', style: TextStyle(color: AppColors.neutral400, fontSize: 11.5)),
               const SizedBox(height: 16),
               TextField(controller: stationController, decoration: const InputDecoration(labelText: 'Station name')),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                value: paymentMethod,
+                items: const [DropdownMenuItem(value: 'Cash', child: Text('Cash')), DropdownMenuItem(value: 'Fuel Card', child: Text('Fuel Card'))],
+                onChanged: (v) => setSheetState(() => paymentMethod = v!),
+                decoration: const InputDecoration(labelText: 'Payment method'),
+              ),
+              const SizedBox(height: 12),
+              TextField(controller: receiptController, decoration: const InputDecoration(labelText: 'Receipt number')),
+              if (paymentMethod == 'Fuel Card') ...[
+                const SizedBox(height: 12),
+                TextField(controller: cardReferenceController, decoration: const InputDecoration(labelText: 'Card transaction reference')),
+              ],
               const SizedBox(height: 12),
               TextField(controller: odoController, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Current odometer (KM)')),
               const SizedBox(height: 12),
@@ -93,6 +110,8 @@ class FuelTab extends StatelessWidget {
                   Expanded(child: TextField(controller: costController, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Estimated cost (\$)'))),
                 ],
               ),
+              const SizedBox(height: 12),
+              TextField(controller: unitPriceController, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Unit price per litre')),
               const SizedBox(height: 18),
               SizedBox(
                 width: double.infinity,
@@ -104,7 +123,8 @@ class FuelTab extends StatelessWidget {
                     final liters = double.tryParse(litersController.text.trim());
                     final cost = double.tryParse(costController.text.trim());
                     final station = stationController.text.trim();
-                    if (enteredOdometer == null || enteredOdometer < odometer || liters == null || liters <= 0 || cost == null || cost <= 0 || station.isEmpty) {
+                    final unitPrice = double.tryParse(unitPriceController.text.trim());
+                    if (enteredOdometer == null || enteredOdometer < odometer || liters == null || liters <= 0 || cost == null || cost <= 0 || unitPrice == null || unitPrice <= 0 || station.isEmpty || receiptController.text.trim().isEmpty) {
                       messenger.showSnackBar(
                         const SnackBar(content: Text('Enter a valid station, odometer, litres, and cost.')),
                       );
@@ -118,8 +138,10 @@ class FuelTab extends StatelessWidget {
                         requestedLiters: liters,
                         estimatedCost: cost,
                         stationName: station,
-                        receiptPhotoUrl: 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&q=80&w=300',
-                        pumpPhotoUrl: 'https://images.unsplash.com/photo-1527018601619-a508a2be00cd?auto=format&fit=crop&q=80&w=300',
+                        paymentMethod: paymentMethod,
+                        receiptNumber: receiptController.text.trim(),
+                        cardTransactionReference: cardReferenceController.text.trim(),
+                        unitPrice: unitPrice,
                       );
                       navigator.pop();
                       messenger.showSnackBar(
@@ -138,7 +160,7 @@ class FuelTab extends StatelessWidget {
             ],
           ),
         ),
-      ),
+      )),
     );
   }
 }
