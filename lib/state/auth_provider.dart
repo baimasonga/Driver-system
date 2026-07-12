@@ -10,10 +10,11 @@ class AppProfile {
   final String? driverId;
   final String? fullName;
   final String? email;
+  final String organizationId;
 
-  const AppProfile({required this.id, required this.role, this.driverId, this.fullName, this.email});
+  const AppProfile({required this.id, required this.role, required this.organizationId, this.driverId, this.fullName, this.email});
 
-  bool get isManager => role == 'manager';
+  bool get isManager => const ['admin','manager','approver','dispatcher','gate_officer','storekeeper','garage'].contains(role);
 
   factory AppProfile.fromRow(Map<String, dynamic> r) => AppProfile(
         id: r['id'],
@@ -21,6 +22,7 @@ class AppProfile {
         driverId: r['driver_id'],
         fullName: r['full_name'],
         email: r['email'],
+        organizationId: r['organization_id'],
       );
 }
 
