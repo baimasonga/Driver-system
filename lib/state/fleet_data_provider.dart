@@ -27,6 +27,7 @@ class FleetDataProvider extends ChangeNotifier {
   List<Trip> trips = [];
   List<FuelRequest> fuelRequests = [];
   List<MaintenanceRequest> maintenanceRequests = [];
+  List<MaintenancePartMovement> maintenancePartMovements = [];
   List<ExceptionRecord> exceptions = [];
   List<Incident> incidents = [];
   List<AuditLog> auditLogs = [];
@@ -49,6 +50,7 @@ class FleetDataProvider extends ChangeNotifier {
         _reloadTrips(),
         _reloadFuelRequests(),
         _reloadMaintenanceRequests(),
+        _reloadMaintenancePartMovements(),
         _reloadExceptions(),
         _reloadIncidents(),
         _reloadAuditLogs(),
@@ -107,6 +109,10 @@ class FleetDataProvider extends ChangeNotifier {
         table: 'maintenance_requests',
         callback: (_) =>
             _reloadMaintenanceRequests().then((_) => notifyListeners()),
+      )
+      ..onPostgresChanges(
+        event: PostgresChangeEvent.all, schema: 'public', table: 'maintenance_part_movements',
+        callback: (_) => _reloadMaintenancePartMovements().then((_) => notifyListeners()),
       )
       ..onPostgresChanges(
         event: PostgresChangeEvent.all,
@@ -172,6 +178,7 @@ class FleetDataProvider extends ChangeNotifier {
     trips = [];
     fuelRequests = [];
     maintenanceRequests = [];
+    maintenancePartMovements = [];
     exceptions = [];
     incidents = [];
     auditLogs = [];
@@ -221,6 +228,11 @@ class FleetDataProvider extends ChangeNotifier {
     maintenanceRequests = rows
         .map((r) => MaintenanceRequest.fromJson(maintenanceRequestRowToJson(r)))
         .toList();
+  }
+
+  Future<void> _reloadMaintenancePartMovements() async {
+    final rows = await _client.from('maintenance_part_movements').select().order('captured_at', ascending: false);
+    maintenancePartMovements = rows.map((r) => MaintenancePartMovement.fromJson(maintenancePartMovementRowToJson(r))).toList();
   }
 
   Future<void> _reloadExceptions() async {
@@ -860,7 +872,26 @@ class FleetDataProvider extends ChangeNotifier {
     required String stationName,
     String? receiptPhotoUrl,
     String? pumpPhotoUrl,
+    required String paymentMethod,
+    required String receiptNumber,
+    String? cardTransactionReference,
+    required double unitPrice,
   }) async {
+    if (!['Cash', 'Fuel Card'].contains(paymentMethod)) {
+      throw StateError('Payment method must be Cash or Fuel Card.');
+    }
+    if (receiptNumber.trim().isEmpty) {
+      throw StateError('A receipt number is required for reconciliation.');
+    }
+    if (paymentMethod == 'Fuel Card' &&
+        (cardTransactionReference?.trim().isEmpty ?? true)) {
+      throw StateError('Fuel-card transactions require a card reference.');
+    }
+    if (unitPrice <= 0) throw StateError('Unit price must be greater than zero.');
+    if (fuelRequests.any((f) =>
+        f.receiptNumber?.toLowerCase() == receiptNumber.trim().toLowerCase())) {
+      throw StateError('This fuel receipt number has already been captured.');
+    }
     final req = FuelRequest(
       id: _genId('f'),
       vehicleId: vehicleId,
@@ -874,6 +905,10 @@ class FleetDataProvider extends ChangeNotifier {
       voucherCode: 'F-VOUCH-${1000 + _rng.nextInt(89999)}',
       receiptPhotoUrl: receiptPhotoUrl,
       pumpPhotoUrl: pumpPhotoUrl,
+      paymentMethod: paymentMethod,
+      receiptNumber: receiptNumber.trim(),
+      cardTransactionReference: cardTransactionReference?.trim(),
+      unitPrice: unitPrice,
     );
     await _persist('fuel_requests', fuelRequestToRow(req));
     fuelRequests = [req, ...fuelRequests];
@@ -923,12 +958,21 @@ class FleetDataProvider extends ChangeNotifier {
       throw StateError('Approval would exceed the monthly fuel allocation.');
     }
 
-    final distance = _distanceSinceLastTrip(vehicle.id);
+    final previous = fuelRequests
+        .where((f) => f.vehicleId == vehicle.id && f.status == 'Completed' && f.id != id)
+        .toList()
+      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    final distance = previous.isEmpty
+        ? _distanceSinceLastTrip(vehicle.id)
+        : req.odometer - previous.first.odometer;
+    if (distance < 0) throw StateError('Fuel odometer cannot be below the previous fuel transaction.');
     final calculatedConsumption = req.requestedLiters > 0
         ? distance / req.requestedLiters
         : 0;
     final expected = vehicle.expectedFuelConsumption;
-    final flagged = expected > 0 && calculatedConsumption < expected * 0.4;
+    final costMismatch = req.unitPrice != null &&
+        (req.estimatedCost - (req.requestedLiters * req.unitPrice!)).abs() > 1;
+    final flagged = (expected > 0 && calculatedConsumption < expected * 0.75) || costMismatch;
 
     final updatedRequest = req.copyWith(
       status: 'Completed',
@@ -936,10 +980,12 @@ class FleetDataProvider extends ChangeNotifier {
       actualLiters: req.requestedLiters,
       actualCost: req.estimatedCost,
       varianceFlagged: flagged,
+      distanceSincePreviousFuelKm: distance,
+      calculatedKmPerLiter: calculatedConsumption,
       varianceReason: flagged
-          ? 'Calculated consumption is ${calculatedConsumption.toStringAsFixed(1)} km/L, which is far below the '
-                'expected ${expected.toStringAsFixed(1)} km/L for this vehicle. Highly indicative of fuel siphoning '
-                'or receipt inflation.'
+          ? '${costMismatch ? 'Receipt total does not match litres × unit price. ' : ''}'
+                'Calculated consumption is ${calculatedConsumption.toStringAsFixed(1)} km/L versus '
+                '${expected.toStringAsFixed(1)} km/L expected.'
           : null,
     );
     fuelRequests = fuelRequests
@@ -1210,6 +1256,38 @@ class FleetDataProvider extends ChangeNotifier {
       entityId: id,
       details: 'Odometer and parts serials verified against invoice.',
     );
+    notifyListeners();
+  }
+
+  Future<void> registerPartReplacement({required String workOrderId, required String sparePartId,
+    required String removedSerial, required String installedSerial, required String removedCondition,
+    required String capturedBy}) async {
+    final workOrder = maintenanceRequests.firstWhereOrNull((m) => m.id == workOrderId);
+    if (workOrder == null || workOrder.status != MaintenanceStatus.inGarage) {
+      throw StateError('Parts can only be installed on a work order currently in the garage.');
+    }
+    if (removedSerial.trim().isEmpty || installedSerial.trim().isEmpty) {
+      throw StateError('Both removed and installed serial numbers are required.');
+    }
+    await _client.rpc('consume_part_for_work_order', params: {
+      'p_id': _genId('part-move'), 'p_maintenance_request_id': workOrderId,
+      'p_spare_part_id': sparePartId, 'p_vehicle_id': workOrder.vehicleId,
+      'p_removed_serial': removedSerial.trim(), 'p_installed_serial': installedSerial.trim(),
+      'p_removed_condition': removedCondition.trim(), 'p_captured_by': capturedBy,
+    });
+    await Future.wait([_reloadSpareParts(), _reloadMaintenancePartMovements()]);
+    notifyListeners();
+  }
+
+  Future<void> saveSparePart(SparePart part) async {
+    if (part.partName.trim().isEmpty || part.partNumber.trim().isEmpty) {
+      throw StateError('Part name and catalog number are required.');
+    }
+    if (part.stockQty < 0 || part.reorderLevel < 0 || part.unitCost < 0) {
+      throw StateError('Stock, reorder level, and unit cost cannot be negative.');
+    }
+    await _persist('spare_parts', sparePartToRow(part));
+    await _reloadSpareParts();
     notifyListeners();
   }
 
