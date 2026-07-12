@@ -968,7 +968,7 @@ class FleetDataProvider extends ChangeNotifier {
     if (distance < 0) throw StateError('Fuel odometer cannot be below the previous fuel transaction.');
     final calculatedConsumption = req.requestedLiters > 0
         ? distance / req.requestedLiters
-        : 0;
+        : 0.0;
     final expected = vehicle.expectedFuelConsumption;
     final costMismatch = req.unitPrice != null &&
         (req.estimatedCost - (req.requestedLiters * req.unitPrice!)).abs() > 1;
