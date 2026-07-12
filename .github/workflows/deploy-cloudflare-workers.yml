@@ -1,4 +1,4 @@
-name: Deploy web console to Cloudflare Pages
+name: Deploy web console to Cloudflare Workers
 
 on:
   push:
@@ -8,9 +8,6 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      deployments: write
     steps:
       - uses: actions/checkout@v4
 
@@ -21,11 +18,12 @@ jobs:
       - run: flutter pub get
       - run: flutter build web --release
 
-      - name: Deploy to Cloudflare Pages
-        uses: cloudflare/pages-action@v1
+      # Deploys the built SPA (build/web) as a static-assets Worker using the
+      # settings in wrangler.toml (name = "drivesys"), publishing to
+      # https://drivesys.<account>.workers.dev.
+      - name: Deploy to Cloudflare Workers
+        uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          projectName: driver-fleet-accountability
-          directory: build/web
-          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+          command: deploy
