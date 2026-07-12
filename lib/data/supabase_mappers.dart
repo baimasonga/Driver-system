@@ -164,6 +164,12 @@ Map<String, dynamic> fuelRequestRowToJson(Map<String, dynamic> r) => {
       'actualLiters': r['actual_liters'],
       'varianceFlagged': r['variance_flagged'],
       'varianceReason': r['variance_reason'],
+      'paymentMethod': r['payment_method'],
+      'receiptNumber': r['receipt_number'],
+      'cardTransactionReference': r['card_transaction_reference'],
+      'unitPrice': r['unit_price'],
+      'distanceSincePreviousFuelKm': r['distance_since_previous_fuel_km'],
+      'calculatedKmPerLiter': r['calculated_km_per_liter'],
     };
 
 Map<String, dynamic> fuelRequestToRow(FuelRequest f) => {
@@ -184,6 +190,12 @@ Map<String, dynamic> fuelRequestToRow(FuelRequest f) => {
       'actual_liters': f.actualLiters,
       'variance_flagged': f.varianceFlagged,
       'variance_reason': f.varianceReason,
+      'payment_method': f.paymentMethod,
+      'receipt_number': f.receiptNumber,
+      'card_transaction_reference': f.cardTransactionReference,
+      'unit_price': f.unitPrice,
+      'distance_since_previous_fuel_km': f.distanceSincePreviousFuelKm,
+      'calculated_km_per_liter': f.calculatedKmPerLiter,
     };
 
 Map<String, dynamic> maintenanceRequestRowToJson(Map<String, dynamic> r) => {
@@ -229,6 +241,16 @@ Map<String, dynamic> maintenanceRequestToRow(MaintenanceRequest m) => {
       'completion_notes': m.completionNotes,
       'test_drive_passed': m.testDrivePassed,
     };
+
+Map<String, dynamic> maintenancePartMovementRowToJson(Map<String, dynamic> r) => {
+  'id': r['id'], 'maintenanceRequestId': r['maintenance_request_id'],
+  'sparePartId': r['spare_part_id'], 'vehicleId': r['vehicle_id'],
+  'partName': r['part_name'], 'partNumber': r['part_number'],
+  'removedSerialNumber': r['removed_serial_number'],
+  'installedSerialNumber': r['installed_serial_number'],
+  'removedCondition': r['removed_condition'], 'quantity': r['quantity'],
+  'unitCost': r['unit_cost'], 'capturedBy': r['captured_by'], 'capturedAt': r['captured_at'],
+};
 
 Map<String, dynamic> sparePartRowToJson(Map<String, dynamic> r) => {
       'id': r['id'],
