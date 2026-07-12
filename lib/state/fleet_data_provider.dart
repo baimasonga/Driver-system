@@ -667,7 +667,38 @@ class FleetDataProvider extends ChangeNotifier {
     return trip;
   }
 
-  void approveTrip(String tripId, {required String approver}) {
+  Future<void> approveTrip(String tripId, {required String approver}) async {
+    final current = trips.firstWhereOrNull((t) => t.id == tripId);
+    if (current == null || current.status != TripStatus.requested) {
+      throw StateError('Only requested trips can be approved.');
+    }
+    final vehicle = vehicleById(current.vehicleId);
+    final driver = driverById(current.driverId);
+    if (vehicle == null || driver == null)
+      throw StateError('The assigned vehicle or driver no longer exists.');
+    if (vehicle.status != VehicleStatus.parked)
+      throw StateError('The vehicle must be parked and available.');
+    if (driver.status != DriverStatus.active)
+      throw StateError('The assigned driver is not active.');
+    if (DateTime.tryParse(driver.licenseExpiry)?.isBefore(DateTime.now()) ??
+        true)
+      throw StateError('The driver licence has expired.');
+    if ((DateTime.tryParse(vehicle.insuranceExpiry)?.isBefore(DateTime.now()) ??
+            true) ||
+        (DateTime.tryParse(
+              vehicle.roadworthinessExpiry,
+            )?.isBefore(DateTime.now()) ??
+            true)) {
+      throw StateError('The vehicle compliance documents have expired.');
+    }
+    if (trips.any(
+      (t) =>
+          t.id != tripId &&
+          t.vehicleId == vehicle.id &&
+          (t.status == TripStatus.approved || t.status == TripStatus.active),
+    )) {
+      throw StateError('This vehicle already has an approved or active trip.');
+    }
     Trip? updated;
     trips = trips.map((t) {
       if (t.id != tripId) return t;
@@ -677,7 +708,8 @@ class FleetDataProvider extends ChangeNotifier {
       );
       return updated!;
     }).toList();
-    if (updated != null) _pushTrip(updated!);
+    if (updated != null)
+      await _client.from('trips').upsert(tripToRow(updated!));
     addAuditLog(
       userId: approver,
       userRole: 'Fleet Manager',
@@ -865,10 +897,20 @@ class FleetDataProvider extends ChangeNotifier {
     return latest.gpsDistanceKm ?? 60;
   }
 
-  void approveFuelRequest(String id, {required String approver}) {
+  Future<void> approveFuelRequest(String id, {required String approver}) async {
     final req = fuelRequests.firstWhereOrNull((f) => f.id == id);
     final vehicle = req == null ? null : vehicleById(req.vehicleId);
     if (req == null || vehicle == null) return;
+    if (req.status != 'Pending')
+      throw StateError('Only pending fuel requests can be approved.');
+    if (req.requestedLiters <= 0 ||
+        req.requestedLiters > vehicle.tankCapacity) {
+      throw StateError('Requested litres exceed the vehicle tank capacity.');
+    }
+    if (vehicle.currentMonthFuelUsed + req.requestedLiters >
+        vehicle.monthlyFuelLimit) {
+      throw StateError('Approval would exceed the monthly fuel allocation.');
+    }
 
     final distance = _distanceSinceLastTrip(vehicle.id);
     final calculatedConsumption = req.requestedLiters > 0
@@ -892,7 +934,9 @@ class FleetDataProvider extends ChangeNotifier {
     fuelRequests = fuelRequests
         .map((f) => f.id == id ? updatedRequest : f)
         .toList();
-    _pushFuelRequest(updatedRequest);
+    await _client
+        .from('fuel_requests')
+        .upsert(fuelRequestToRow(updatedRequest));
 
     final updatedVehicle = vehicle.copyWith(
       currentMonthFuelUsed: vehicle.currentMonthFuelUsed + req.requestedLiters,
@@ -900,7 +944,7 @@ class FleetDataProvider extends ChangeNotifier {
     vehicles = vehicles
         .map((v) => v.id == vehicle.id ? updatedVehicle : v)
         .toList();
-    _pushVehicle(updatedVehicle);
+    await _client.from('vehicles').upsert(vehicleToRow(updatedVehicle));
 
     addAuditLog(
       userId: approver,
@@ -928,18 +972,24 @@ class FleetDataProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  void rejectFuelRequest(
+  Future<void> rejectFuelRequest(
     String id, {
     required String approver,
     required String reason,
-  }) {
+  }) async {
+    final current = fuelRequests.firstWhereOrNull((f) => f.id == id);
+    if (current == null || current.status != 'Pending')
+      throw StateError('Only pending fuel requests can be rejected.');
+    if (reason.trim().isEmpty)
+      throw StateError('A rejection reason is required.');
     FuelRequest? updated;
     fuelRequests = fuelRequests.map((f) {
       if (f.id != id) return f;
       updated = f.copyWith(status: 'Rejected');
       return updated!;
     }).toList();
-    if (updated != null) _pushFuelRequest(updated!);
+    if (updated != null)
+      await _client.from('fuel_requests').upsert(fuelRequestToRow(updated!));
     addAuditLog(
       userId: approver,
       userRole: 'Fleet Manager',
@@ -991,11 +1041,16 @@ class FleetDataProvider extends ChangeNotifier {
     return req;
   }
 
-  void approveMaintenanceRequest(
+  Future<void> approveMaintenanceRequest(
     String id, {
     required String approver,
     required double approvedAmount,
-  }) {
+  }) async {
+    final current = maintenanceRequests.firstWhereOrNull((m) => m.id == id);
+    if (current == null || current.status != MaintenanceStatus.pending)
+      throw StateError('Only pending maintenance requests can be approved.');
+    if (approvedAmount <= 0)
+      throw StateError('Approved amount must be greater than zero.');
     MaintenanceRequest? updated;
     maintenanceRequests = maintenanceRequests.map((m) {
       if (m.id != id) return m;
@@ -1005,7 +1060,10 @@ class FleetDataProvider extends ChangeNotifier {
       );
       return updated!;
     }).toList();
-    if (updated != null) _pushMaintenanceRequest(updated!);
+    if (updated != null)
+      await _client
+          .from('maintenance_requests')
+          .upsert(maintenanceRequestToRow(updated!));
     addAuditLog(
       userId: approver,
       userRole: 'Fleet Manager',
@@ -1017,11 +1075,15 @@ class FleetDataProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  void dispatchToGarage(
+  Future<void> dispatchToGarage(
     String id, {
     required String dispatcher,
     required String garageName,
-  }) {
+  }) async {
+    final current = maintenanceRequests.firstWhereOrNull((m) => m.id == id);
+    if (current == null || current.status != MaintenanceStatus.approved)
+      throw StateError('Only approved maintenance can be dispatched.');
+    if (garageName.trim().isEmpty) throw StateError('Garage name is required.');
     MaintenanceRequest? updated;
     maintenanceRequests = maintenanceRequests.map((m) {
       if (m.id != id) return m;
@@ -1031,7 +1093,10 @@ class FleetDataProvider extends ChangeNotifier {
       );
       return updated!;
     }).toList();
-    if (updated != null) _pushMaintenanceRequest(updated!);
+    if (updated != null)
+      await _client
+          .from('maintenance_requests')
+          .upsert(maintenanceRequestToRow(updated!));
     addAuditLog(
       userId: dispatcher,
       userRole: 'Fleet Manager',
@@ -1043,7 +1108,7 @@ class FleetDataProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  void completeMaintenanceRequest(
+  Future<void> completeMaintenanceRequest(
     String id, {
     required String completedBy,
     required double invoiceAmount,
@@ -1051,7 +1116,14 @@ class FleetDataProvider extends ChangeNotifier {
     String? afterPhotoUrl,
     String? completionNotes,
     bool testDrivePassed = true,
-  }) {
+  }) async {
+    final current = maintenanceRequests.firstWhereOrNull((m) => m.id == id);
+    if (current == null || current.status != MaintenanceStatus.inGarage)
+      throw StateError(
+        'Only maintenance currently in a garage can be completed.',
+      );
+    if (invoiceAmount <= 0)
+      throw StateError('Invoice amount must be greater than zero.');
     MaintenanceRequest? updated;
     maintenanceRequests = maintenanceRequests.map((m) {
       if (m.id != id) return m;
@@ -1065,7 +1137,10 @@ class FleetDataProvider extends ChangeNotifier {
       );
       return updated!;
     }).toList();
-    if (updated != null) _pushMaintenanceRequest(updated!);
+    if (updated != null)
+      await _client
+          .from('maintenance_requests')
+          .upsert(maintenanceRequestToRow(updated!));
 
     final req = updated;
     if (req != null &&
@@ -1097,14 +1172,25 @@ class FleetDataProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  void verifyMaintenanceRequest(String id, {required String verifier}) {
+  Future<void> verifyMaintenanceRequest(
+    String id, {
+    required String verifier,
+  }) async {
+    final current = maintenanceRequests.firstWhereOrNull((m) => m.id == id);
+    if (current == null || current.status != MaintenanceStatus.completed)
+      throw StateError('Only completed maintenance can be verified.');
+    if (current.testDrivePassed != true)
+      throw StateError('The test drive must pass before verification.');
     MaintenanceRequest? updated;
     maintenanceRequests = maintenanceRequests.map((m) {
       if (m.id != id) return m;
       updated = m.copyWith(status: MaintenanceStatus.verified);
       return updated!;
     }).toList();
-    if (updated != null) _pushMaintenanceRequest(updated!);
+    if (updated != null)
+      await _client
+          .from('maintenance_requests')
+          .upsert(maintenanceRequestToRow(updated!));
     addAuditLog(
       userId: verifier,
       userRole: 'Fleet Manager',
@@ -1219,18 +1305,30 @@ class FleetDataProvider extends ChangeNotifier {
     return incident;
   }
 
-  void updateIncidentStatus(
+  Future<void> updateIncidentStatus(
     String id,
     String status, {
     required String updatedBy,
-  }) {
+  }) async {
+    const transitions = <String, Set<String>>{
+      'Pending': {'Under Investigation'},
+      'Under Investigation': {'Resolved'},
+    };
+    final current = incidents.firstWhereOrNull((i) => i.id == id);
+    if (current == null) throw StateError('Incident not found.');
+    if (!(transitions[current.status]?.contains(status) ?? false)) {
+      throw StateError(
+        'Invalid incident transition from ${current.status} to $status.',
+      );
+    }
     Incident? updated;
     incidents = incidents.map((i) {
       if (i.id != id) return i;
       updated = i.copyWith(status: status);
       return updated!;
     }).toList();
-    if (updated != null) _pushIncident(updated!);
+    if (updated != null)
+      await _client.from('incidents').upsert(incidentToRow(updated!));
     addAuditLog(
       userId: updatedBy,
       userRole: 'Fleet Manager',
@@ -1246,11 +1344,13 @@ class FleetDataProvider extends ChangeNotifier {
   // Policies & spare parts
   // ---------------------------------------------------------------------
 
-  void updatePolicyRuleValue(
+  Future<void> updatePolicyRuleValue(
     String id,
     String newValue, {
     required String updatedBy,
-  }) {
+  }) async {
+    if (newValue.trim().isEmpty)
+      throw StateError('Policy value cannot be empty.');
     final old = policyRules.firstWhereOrNull((p) => p.id == id);
     PolicyRule? updated;
     policyRules = policyRules.map((p) {
@@ -1258,7 +1358,8 @@ class FleetDataProvider extends ChangeNotifier {
       updated = p.copyWith(value: newValue);
       return updated!;
     }).toList();
-    if (updated != null) _pushPolicyRule(updated!);
+    if (updated != null)
+      await _client.from('policy_rules').upsert(policyRuleToRow(updated!));
     addAuditLog(
       userId: updatedBy,
       userRole: 'System Admin',
