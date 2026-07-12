@@ -29,9 +29,12 @@ class _TripsScreenState extends State<TripsScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        SizedBox(
-          height: 36,
-          child: ListView.separated(
+        Row(
+          children: [
+            Expanded(
+              child: SizedBox(
+                height: 40,
+                child: ListView.separated(
             scrollDirection: Axis.horizontal,
             itemCount: filters.length,
             separatorBuilder: (_, __) => const SizedBox(width: 8),
@@ -54,8 +57,27 @@ class _TripsScreenState extends State<TripsScreen> {
                 ),
               );
             },
-          ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            ElevatedButton.icon(
+              onPressed: data.vehicles.isEmpty || data.drivers.isEmpty
+                  ? null
+                  : () => _createTrip(context, data),
+              icon: const Icon(Icons.add, size: 17),
+              label: const Text('Create Trip'),
+            ),
+          ],
         ),
+        if (data.vehicles.isEmpty || data.drivers.isEmpty) ...[
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(color: AppColors.amber500.withOpacity(0.08), borderRadius: BorderRadius.circular(12), border: Border.all(color: AppColors.amber500.withOpacity(0.3))),
+            child: const Text('Create at least one vehicle and one active driver before creating a trip.', style: TextStyle(color: AppColors.amber500, fontSize: 12)),
+          ),
+        ],
         const SizedBox(height: 16),
         Expanded(
           child: trips.isEmpty
@@ -248,6 +270,82 @@ class _TripsScreenState extends State<TripsScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  void _createTrip(BuildContext context, FleetDataProvider data) {
+    String vehicleId = data.vehicles.first.id;
+    String driverId = data.drivers.first.id;
+    final department = TextEditingController();
+    final pickup = TextEditingController();
+    final destination = TextEditingController();
+    final purpose = TextEditingController();
+    final passengers = TextEditingController();
+    final cargo = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Create Trip Assignment'),
+          content: SizedBox(
+            width: 520,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  DropdownButtonFormField<String>(
+                    value: vehicleId,
+                    items: data.vehicles.map((v) => DropdownMenuItem(value: v.id, child: Text('${v.registrationNumber} · ${v.make} ${v.model}'))).toList(),
+                    onChanged: (v) => setDialogState(() => vehicleId = v!),
+                    decoration: const InputDecoration(labelText: 'Vehicle'),
+                  ),
+                  const SizedBox(height: 10),
+                  DropdownButtonFormField<String>(
+                    value: driverId,
+                    items: data.drivers.map((d) => DropdownMenuItem(value: d.id, child: Text('${d.name} · ${d.staffNumber}'))).toList(),
+                    onChanged: (v) => setDialogState(() => driverId = v!),
+                    decoration: const InputDecoration(labelText: 'Driver'),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(controller: department, decoration: const InputDecoration(labelText: 'Requesting department')),
+                  const SizedBox(height: 10),
+                  Row(children: [
+                    Expanded(child: TextField(controller: pickup, decoration: const InputDecoration(labelText: 'Pickup point'))),
+                    const SizedBox(width: 10),
+                    Expanded(child: TextField(controller: destination, decoration: const InputDecoration(labelText: 'Destination'))),
+                  ]),
+                  const SizedBox(height: 10),
+                  TextField(controller: purpose, maxLines: 2, decoration: const InputDecoration(labelText: 'Trip purpose')),
+                  const SizedBox(height: 10),
+                  TextField(controller: passengers, decoration: const InputDecoration(labelText: 'Passengers (comma separated)')),
+                  const SizedBox(height: 10),
+                  TextField(controller: cargo, decoration: const InputDecoration(labelText: 'Cargo/notes (optional)')),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')),
+            ElevatedButton(onPressed: () async {
+              if ([department.text, pickup.text, destination.text, purpose.text].any((v) => v.trim().isEmpty)) {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Department, pickup, destination and purpose are required.')));
+                return;
+              }
+              try {
+                await data.requestTrip(
+                  vehicleId: vehicleId, driverId: driverId, department: department.text.trim(),
+                  passengers: passengers.text.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList(),
+                  cargoNotes: cargo.text.trim().isEmpty ? null : cargo.text.trim(), purpose: purpose.text.trim(),
+                  pickupPoint: pickup.text.trim(), destination: destination.text.trim(),
+                );
+                if (dialogContext.mounted) Navigator.pop(dialogContext);
+              } catch (e) {
+                if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString().replaceFirst('Bad state: ', ''))));
+              }
+            }, child: const Text('Create Request')),
+          ],
+        ),
+      ),
     );
   }
 }
