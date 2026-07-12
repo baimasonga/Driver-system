@@ -750,10 +750,6 @@ class FleetDataProvider extends ChangeNotifier {
   }) async {
     final trip = trips.firstWhereOrNull((t) => t.id == tripId);
     if (trip == null) return;
-    // Simulate the tamper-proof GPS tracker's expected route distance for
-    // this trip so the sign-in fraud check has an independent reference
-    // point to compare the driver-reported odometer delta against.
-    final simulatedGpsDistanceKm = (8 + _rng.nextInt(55)).toDouble();
     final updatedTrip = trip.copyWith(
       status: TripStatus.active,
       startedAt: DateTime.now().toIso8601String(),
@@ -761,7 +757,6 @@ class FleetDataProvider extends ChangeNotifier {
       signOutFuelLevel: fuelLevel,
       signOutOfficerName: officerName,
       signOutTime: DateTime.now().toIso8601String(),
-      gpsDistanceKm: simulatedGpsDistanceKm,
     );
     await _persist('trips', tripToRow(updatedTrip));
     trips = trips.map((t) => t.id == tripId ? updatedTrip : t).toList();
@@ -790,9 +785,9 @@ class FleetDataProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Ends a trip and runs the odometer-vs-GPS fraud check.
-  /// [gpsDistanceKm] simulates the tamper-proof tracker reading; if omitted
-  /// the trip's existing value (or the reported distance) is used.
+  /// Ends a trip and runs the odometer-vs-GPS fraud check only when an
+  /// independent tracker distance is available. Missing telemetry is
+  /// recorded as an exception; the system never invents GPS evidence.
   Future<void> signInTrip(
     String tripId, {
     required double odometer,
@@ -805,9 +800,9 @@ class FleetDataProvider extends ChangeNotifier {
     final driver = driverById(trip.driverId);
     final startOdo = trip.signOutOdometer ?? odometer;
     final reportedDist = odometer - startOdo;
-    final gpsDist = gpsDistanceKm ?? trip.gpsDistanceKm ?? reportedDist;
+    final gpsDist = gpsDistanceKm ?? trip.gpsDistanceKm;
 
-    final fraudDetected = gpsDist > 0 && reportedDist > gpsDist * 1.4;
+    final fraudDetected = gpsDist != null && gpsDist > 0 && reportedDist > gpsDist * 1.4;
     final newStatus = fraudDetected ? TripStatus.flagged : TripStatus.completed;
 
     final updatedTrip = trip.copyWith(
@@ -850,8 +845,17 @@ class FleetDataProvider extends ChangeNotifier {
         title: 'Odometer Inflation / Route Falsification',
         description:
             'Driver ${driver?.name ?? trip.driverId} completed trip ${trip.tripRequestNumber} with final odometer $odometer '
-            '(+${reportedDist.toStringAsFixed(1)}km), but GPS tracking recorded only ${gpsDist.toStringAsFixed(1)}km travelled. '
-            'Discrepancy of ${(reportedDist - gpsDist).toStringAsFixed(1)}km suggests manual odometer tampering or unauthorized sideline trips.',
+            '(+${reportedDist.toStringAsFixed(1)}km), but GPS tracking recorded only ${gpsDist!.toStringAsFixed(1)}km travelled. '
+            'Discrepancy of ${(reportedDist - gpsDist!).toStringAsFixed(1)}km suggests manual odometer tampering or unauthorized sideline trips.',
+        vehicleId: trip.vehicleId,
+        driverId: trip.driverId,
+      );
+    } else if (gpsDist == null) {
+      await _raiseException(
+        type: 'Telemetry',
+        severity: ExceptionSeverity.high,
+        title: 'Missing GPS Evidence for Completed Trip',
+        description: 'Trip ${trip.tripRequestNumber} was signed in without an independent GPS distance. Odometer variance could not be verified.',
         vehicleId: trip.vehicleId,
         driverId: trip.driverId,
       );
