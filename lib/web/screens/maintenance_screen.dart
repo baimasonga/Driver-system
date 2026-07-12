@@ -180,9 +180,12 @@ class _ActionsFor extends StatelessWidget {
           child: const Text('Dispatch to Garage'),
         );
       case MaintenanceStatus.inGarage:
-        return ElevatedButton(
-          onPressed: () => _promptCompletion(context, data, request),
-          child: const Text('Mark Completed'),
+        return Wrap(
+          spacing: 8,
+          children: [
+            OutlinedButton(onPressed: () => _promptPart(context, data, request), child: const Text('Register Part Swap')),
+            ElevatedButton(onPressed: () => _promptCompletion(context, data, request), child: const Text('Mark Completed')),
+          ],
         );
       case MaintenanceStatus.completed:
         return ElevatedButton(
@@ -304,6 +307,40 @@ class _ActionsFor extends StatelessWidget {
       );
   }
 
+  void _promptPart(BuildContext context, FleetDataProvider data, MaintenanceRequest request) {
+    final availableParts = data.spareParts.where((p) => p.stockQty > 0).toList();
+    if (availableParts.isEmpty) {
+      _error(context, StateError('Add stock to the inventory catalog first.'));
+      return;
+    }
+    String partId = availableParts.first.id;
+    final removed = TextEditingController();
+    final installed = TextEditingController();
+    final condition = TextEditingController(text: 'Worn');
+    showDialog(context: context, builder: (dialogContext) => AlertDialog(
+      title: const Text('Serialized Part Replacement'),
+      content: StatefulBuilder(builder: (context, setState) => Column(mainAxisSize: MainAxisSize.min, children: [
+        DropdownButtonFormField<String>(value: partId,
+          items: availableParts.map((p) => DropdownMenuItem(value: p.id, child: Text('${p.partName} (${p.stockQty})'))).toList(),
+          onChanged: (v) => setState(() => partId = v!), decoration: const InputDecoration(labelText: 'Catalog part')),
+        const SizedBox(height: 10),
+        TextField(controller: removed, decoration: const InputDecoration(labelText: 'Removed part serial number')),
+        const SizedBox(height: 10),
+        TextField(controller: installed, decoration: const InputDecoration(labelText: 'Installed part serial number')),
+        const SizedBox(height: 10),
+        TextField(controller: condition, decoration: const InputDecoration(labelText: 'Removed part condition')),
+      ])),
+      actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')),
+        ElevatedButton(onPressed: () async { try {
+          final name = context.read<AuthProvider>().profile?.fullName ?? 'Fleet Manager';
+          await data.registerPartReplacement(workOrderId: request.id, sparePartId: partId,
+            removedSerial: removed.text, installedSerial: installed.text,
+            removedCondition: condition.text, capturedBy: name);
+          if (dialogContext.mounted) Navigator.pop(dialogContext);
+        } catch (e) { _error(context, e); } }, child: const Text('Record & Issue Part'))],
+    ));
+  }
+
   void _promptGarage(BuildContext context, FleetDataProvider data, String id) {
     final controller = TextEditingController(
       text: 'Toyota Official Country Garage',
@@ -355,7 +392,9 @@ class _SparePartsTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final data = context.watch<FleetDataProvider>();
-    return ListView.separated(
+    return Column(children: [Align(alignment: Alignment.centerRight,
+      child: ElevatedButton.icon(onPressed: () => _addPart(context, data), icon: const Icon(Icons.add), label: const Text('Add Catalog Part'))),
+      const SizedBox(height: 10), Expanded(child: ListView.separated(
       itemCount: data.spareParts.length,
       separatorBuilder: (_, __) => const SizedBox(height: 10),
       itemBuilder: (context, i) {
@@ -420,7 +459,29 @@ class _SparePartsTab extends StatelessWidget {
           ),
         );
       },
-    );
+    ))]);
+  }
+
+  void _addPart(BuildContext context, FleetDataProvider data) {
+    final name = TextEditingController(); final number = TextEditingController();
+    final category = TextEditingController(); final model = TextEditingController();
+    final cost = TextEditingController(); final stock = TextEditingController(); final reorder = TextEditingController();
+    showDialog(context: context, builder: (dialogContext) => AlertDialog(title: const Text('Add Inventory Part'),
+      content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
+        TextField(controller: name, decoration: const InputDecoration(labelText: 'Part name')),
+        TextField(controller: number, decoration: const InputDecoration(labelText: 'Catalog/part number')),
+        TextField(controller: category, decoration: const InputDecoration(labelText: 'Category')),
+        TextField(controller: model, decoration: const InputDecoration(labelText: 'Compatible vehicle model')),
+        TextField(controller: cost, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Unit cost')),
+        TextField(controller: stock, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Opening stock')),
+        TextField(controller: reorder, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Low-stock trigger')),
+      ])), actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')),
+        ElevatedButton(onPressed: () async { try { await data.saveSparePart(SparePart(
+          id: 'sp-${DateTime.now().microsecondsSinceEpoch}', partName: name.text.trim(), partNumber: number.text.trim(),
+          category: category.text.trim(), compatibleVehicleModel: model.text.trim(), unitCost: double.tryParse(cost.text) ?? -1,
+          stockQty: int.tryParse(stock.text) ?? -1, reorderLevel: int.tryParse(reorder.text) ?? -1));
+          if (dialogContext.mounted) Navigator.pop(dialogContext);
+        } catch (e) { if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e'))); } }, child: const Text('Save'))]));
   }
 }
 
