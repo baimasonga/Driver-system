@@ -22,6 +22,10 @@ class OverviewScreen extends StatelessWidget {
     final pendingFuel = data.fuelRequests.where((f) => f.status == 'Pending').length;
     final pendingMaintenance = data.maintenanceRequests.where((m) => m.status == MaintenanceStatus.pending).length;
     final monthlyFuelUsed = data.vehicles.fold<double>(0, (sum, v) => sum + v.currentMonthFuelUsed);
+    final fuelVarianceFlags = data.fuelRequests.where((f) => f.varianceFlagged == true).length;
+    final lowStockParts = data.spareParts.where((p) => p.stockQty <= p.reorderLevel).length;
+    final partSwaps = data.maintenancePartMovements.length;
+    final openWorkOrders = data.maintenanceRequests.where((m) => m.status != MaintenanceStatus.verified).length;
 
     return SingleChildScrollView(
       child: Column(
@@ -53,6 +57,26 @@ class OverviewScreen extends StatelessWidget {
             accent: AppColors.amber500,
             sublabel: '${data.vehicles.length} vehicles tracked',
           ),
+          const SizedBox(height: 24),
+          const SectionHeader(title: 'Operational Controls', icon: Icons.fact_check_outlined),
+          const SizedBox(height: 12),
+          LayoutBuilder(builder: (context, constraints) {
+            final cross = constraints.maxWidth > 800 ? 4 : 2;
+            return GridView.count(
+              crossAxisCount: cross,
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              mainAxisSpacing: 12,
+              crossAxisSpacing: 12,
+              childAspectRatio: 1.9,
+              children: [
+                StatCard(label: 'Fuel Audit Flags', value: '$fuelVarianceFlags', icon: Icons.receipt_long, accent: AppColors.red500, sublabel: 'Receipt, cost and km/L exceptions'),
+                StatCard(label: 'Open Work Orders', value: '$openWorkOrders', icon: Icons.assignment_outlined, accent: AppColors.orange500, sublabel: 'Diagnosis through verification'),
+                StatCard(label: 'Low-stock Parts', value: '$lowStockParts', icon: Icons.inventory_2_outlined, accent: AppColors.amber500, sublabel: 'At or below reorder level'),
+                StatCard(label: 'Serialized Part Swaps', value: '$partSwaps', icon: Icons.swap_horiz, accent: AppColors.blue500, sublabel: 'Removed vs installed register'),
+              ],
+            );
+          }),
           const SizedBox(height: 24),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
