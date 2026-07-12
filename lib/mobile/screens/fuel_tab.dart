@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../state/driver_session.dart';
+import '../../state/auth_provider.dart';
 import '../../state/fleet_data_provider.dart';
+import '../../services/evidence_upload_service.dart';
 import '../../theme/app_theme.dart';
 import '../../utils/formatters.dart';
 import '../../widgets/status_badge.dart';
@@ -69,6 +71,8 @@ class FuelTab extends StatelessWidget {
     final cardReferenceController = TextEditingController();
     final unitPriceController = TextEditingController(text: '2');
     String paymentMethod = 'Cash';
+    String? receiptEvidence;
+    String? pumpEvidence;
 
     showModalBottomSheet(
       context: context,
@@ -112,6 +116,22 @@ class FuelTab extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               TextField(controller: unitPriceController, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Unit price per litre')),
+              const SizedBox(height: 12),
+              Row(children: [
+                Expanded(child: OutlinedButton.icon(onPressed: () async {
+                  try { final org = context.read<AuthProvider>().profile!.organizationId;
+                    final path = await EvidenceUploadService.pickAndUpload(organizationId: org, category: 'fuel-receipts');
+                    if (path != null) setSheetState(() => receiptEvidence = path);
+                  } catch (e) { messenger(context, '$e'); }
+                }, icon: Icon(receiptEvidence == null ? Icons.upload_file : Icons.check_circle), label: Text(receiptEvidence == null ? 'Upload Receipt' : 'Receipt Attached'))),
+                const SizedBox(width: 10),
+                Expanded(child: OutlinedButton.icon(onPressed: () async {
+                  try { final org = context.read<AuthProvider>().profile!.organizationId;
+                    final path = await EvidenceUploadService.pickAndUpload(organizationId: org, category: 'fuel-pump');
+                    if (path != null) setSheetState(() => pumpEvidence = path);
+                  } catch (e) { messenger(context, '$e'); }
+                }, icon: Icon(pumpEvidence == null ? Icons.add_a_photo_outlined : Icons.check_circle), label: Text(pumpEvidence == null ? 'Upload Pump Photo' : 'Pump Photo Attached'))),
+              ]),
               const SizedBox(height: 18),
               SizedBox(
                 width: double.infinity,
@@ -142,6 +162,8 @@ class FuelTab extends StatelessWidget {
                         receiptNumber: receiptController.text.trim(),
                         cardTransactionReference: cardReferenceController.text.trim(),
                         unitPrice: unitPrice,
+                        receiptPhotoUrl: receiptEvidence,
+                        pumpPhotoUrl: pumpEvidence,
                       );
                       navigator.pop();
                       messenger.showSnackBar(
@@ -162,5 +184,9 @@ class FuelTab extends StatelessWidget {
         ),
       )),
     );
+  }
+
+  void messenger(BuildContext context, String message) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message.replaceFirst('Bad state: ', ''))));
   }
 }
