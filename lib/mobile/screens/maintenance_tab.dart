@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../state/driver_session.dart';
+import '../../state/auth_provider.dart';
 import '../../state/fleet_data_provider.dart';
+import '../../services/evidence_upload_service.dart';
 import '../../theme/app_theme.dart';
 import '../../utils/formatters.dart';
 import '../../widgets/status_badge.dart';
@@ -60,6 +62,7 @@ class MaintenanceTab extends StatelessWidget {
     final descController = TextEditingController();
     String category = 'Corrective';
     String severity = 'Medium';
+    String? diagnosticEvidence;
 
     showModalBottomSheet(
       context: context,
@@ -97,6 +100,20 @@ class MaintenanceTab extends StatelessWidget {
                   maxLines: 3,
                   decoration: const InputDecoration(labelText: 'Describe the fault'),
                 ),
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  onPressed: () async {
+                    try {
+                      final org = context.read<AuthProvider>().profile!.organizationId;
+                      final path = await EvidenceUploadService.pickAndUpload(organizationId: org, category: 'maintenance-diagnostics');
+                      if (path != null) setState(() => diagnosticEvidence = path);
+                    } catch (e) {
+                      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+                    }
+                  },
+                  icon: Icon(diagnosticEvidence == null ? Icons.add_a_photo_outlined : Icons.check_circle),
+                  label: Text(diagnosticEvidence == null ? 'Attach Diagnostic Photo' : 'Diagnostic Evidence Attached'),
+                ),
                 const SizedBox(height: 18),
                 SizedBox(
                   width: double.infinity,
@@ -112,7 +129,7 @@ class MaintenanceTab extends StatelessWidget {
                           description: descController.text.isEmpty ? 'Unspecified fault reported by driver.' : descController.text,
                           severity: severity,
                           odometer: odometer,
-                          beforePhotoUrl: null,
+                          beforePhotoUrl: diagnosticEvidence,
                         );
                         navigator.pop();
                         messenger.showSnackBar(
