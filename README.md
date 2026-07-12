@@ -4,7 +4,8 @@ A two-in-one fleet accountability platform for anti-theft, odometer fraud
 verification, fuel variance detection, and maintenance audits: one **Flutter
 web console** for fleet managers and one **Flutter Android app** for
 drivers, built from a single shared Dart codebase, backed by **Supabase**
-(Postgres + Realtime) and hosted on **Cloudflare Pages**.
+(Postgres + Realtime) and hosted on **Cloudflare Workers** at
+https://drivesys.mohamedamadubangura.workers.dev.
 
 - **Web console** (`flutter build web`) — vehicles, drivers, trips, fuel
   approvals, maintenance workflow, spare parts & tyres, exceptions
@@ -60,27 +61,24 @@ Row Level Security, not by keeping that key secret).
   check) is off by default on a new project — worth switching on in
   Authentication → Policies in the dashboard before real use.
 
-## Hosting: Cloudflare Pages
+## Hosting: Cloudflare Workers
 
-The web console (`flutter build web` → `build/web`) is a static SPA, which
-deploys cleanly to Cloudflare Pages. Two ways to ship it:
+The web console (`flutter build web` → `build/web`) is a static SPA, served
+as a Cloudflare **Workers** static-assets deployment (`wrangler.toml` has
+`name = "drivesys"` and an `[assets]` block), publishing to
+https://drivesys.mohamedamadubangura.workers.dev. Two ways to ship it:
 
-1. **GitHub Actions** (`.github/workflows/deploy-cloudflare-pages.yml`) —
-   builds and deploys on every push to `main`. Requires two repo secrets,
-   which only you can create (this environment has no Cloudflare
-   credentials):
-   - `CLOUDFLARE_API_TOKEN` — a Cloudflare API token with *Pages: Edit*
-     permission
+1. **GitHub Actions** (`.github/workflows/deploy-cloudflare-workers.yml`) —
+   builds and deploys on every push to `main` via `cloudflare/wrangler-action`.
+   Requires two repo secrets:
+   - `CLOUDFLARE_API_TOKEN` — a Cloudflare API token with *Workers Scripts:
+     Edit* permission
    - `CLOUDFLARE_ACCOUNT_ID` — found in the Cloudflare dashboard sidebar
-
-   The workflow deploys to a Pages project named `driver-fleet-accountability`
-   (create it once in the Cloudflare dashboard, or let the first deploy
-   create it).
 
 2. **Manual, via Wrangler** (`wrangler.toml` is already set up):
    ```bash
    flutter build web --release
-   npx wrangler pages deploy build/web --project-name=driver-fleet-accountability
+   npx wrangler deploy
    ```
 
 The Android driver app isn't hosted on Cloudflare — build an APK/AAB and
