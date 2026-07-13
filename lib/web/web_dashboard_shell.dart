@@ -14,6 +14,7 @@ import 'screens/exceptions_screen.dart';
 import 'screens/policies_screen.dart';
 import 'screens/incidents_screen.dart';
 import 'screens/audit_log_screen.dart';
+import 'screens/organization_access_screen.dart';
 
 class NavItem {
   final String label;
@@ -43,6 +44,7 @@ class _WebDashboardShellState extends State<WebDashboardShell> {
     NavItem('Exceptions', Icons.gpp_maybe_outlined, () => const ExceptionsScreen()),
     NavItem('Incidents', Icons.report_gmailerrorred_outlined, () => const IncidentsScreen()),
     NavItem('Policies', Icons.rule_folder_outlined, () => const PoliciesScreen()),
+    NavItem('Organization & Access', Icons.admin_panel_settings_outlined, () => const OrganizationAccessScreen()),
     NavItem('Blackbox / Audit', Icons.security_outlined, () => const AuditLogScreen()),
   ];
 
